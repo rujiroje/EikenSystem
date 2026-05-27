@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls -la 'c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\backend')",
+      "Bash(ls -la \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\frontend\")",
+      "Bash(find \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\backend\\\\src\" -type f -name \"*.ts\")",
+      "Bash(find \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\frontend\\\\src\" -type f -name \"*.ts\" -o -name \"*.tsx\")",
+      "Bash(find \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\" -maxdepth 2 -type d)",
+      "Bash(ls -la \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\backend\\\\src\")",
+      "Bash(ls -la \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\frontend\\\\src\")",
+      "Bash(find \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\frontend\\\\src\" -type f -name \"*.tsx\" -o -name \"*.ts\")",
+      "Bash(find \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\backend-spring\\\\src\" -type f -name \"*.java\")",
+      "Bash(ls -la \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\KiosAgent\")",
+      "Bash(ls -la \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\KiosAgent\\\\KiosBioAgent\")",
+      "Bash(find \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\backend-spring\\\\src\" -type f -name \"*Controller.java\")",
+      "Bash(find \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\backend-spring\\\\src\" -type f -name \"*Service.java\")",
+      "Bash(find \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\backend-spring\\\\src\\\\main\\\\java\\\\com\\\\example\\\\eikensystem\\\\domain\" -type f -name \"*.java\")",
+      "Bash(npm run:*)",
+      "Bash(start \"\" \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\mockup_operator.html\")",
+      "Bash(start \"\" \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\mockup_operator_v2.html\")",
+      "Bash(mvn compile:*)"
+    ]
+  }
+}

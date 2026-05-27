@@ -1,0 +1,36 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"search.followSymlinks": false,
+		"java.completion.maxResults": 20,
+		"java.signatureHelp.enabled": false,
+		"redhat.telemetry.enabled": false,
+		"telemetry.enableCrashReporter": false,
+		"java.compile.nullAnalysis.mode": "automatic",
+		"java.configuration.updateBuildConfiguration": "automatic",
+		"java.debug.settings.console": "internalConsole",
+		"terminal.integrated.profiles.windows": {
+			"Command Prompt": {
+				"path": "C:/Windows/System32/cmd.exe"
+			},
+			"PowerShell": {
+				"path": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+			},
+			"Git Bash": {
+				"path": "C:/Program Files/Git/bin/bash.exe",
+				"args": [
+					"-l"
+				],
+				"icon": "terminal-bash"
+			}
+		},
+		"terminal.integrated.defaultProfile.windows": "Git Bash",
+		"terminal.integrated.env.windows": {
+			"PATH": "${env:PATH};C:/Program Files/nodejs"
+		}
+	}
+}

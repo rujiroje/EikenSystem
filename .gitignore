@@ -1,0 +1,36 @@
+# Node
+node_modules/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-store/
+
+# VS Code
+.vscode/
+.history/
+
+# Build outputs
+backend/dist/
+frontend/dist/
+backend-spring/target/
+backend-spring/.idea/
+
+# Env
+.env
+.env.*.local
+backend-spring/src/main/resources/application-local.yml
+
+# SSL certificates (private key ห้าม commit)
+nginx/ssl/*.key
+nginx/ssl/*.crt
+nginx/ssl/*.pem
+nginx/ssl/openssl.cnf
+
+# KiosAgent .NET build output
+KiosAgent/**/bin/
+KiosAgent/**/obj/
+
+# Mac/Win
+.DS_Store
+Thumbs.db

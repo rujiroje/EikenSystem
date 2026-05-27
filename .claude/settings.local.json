@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\" -type f -name \"*.json\" -o -name \"*.md\" -o -name \"*.txt\" -o -name \"*.py\" -o -name \"*.js\" -o -name \"*.tsx\" -o -name \"*.ts\")",
+      "Bash(powershell -Command \"Set-Location ''c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\backend-spring''; .\\\\mvnw.cmd compile 2>&1 | Select-Object -Last 20\")",
+      "Bash(powershell -Command \"Set-Location ''c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\backend-spring''; .\\\\mvnw.cmd compile 2>&1 | Select-Object -Last 10\")",
+      "Bash(find \"/c/Users/Rujiroje/OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd/MyData/IT/TST/Target/2025/Eiken Weight/Eikensystem\" -type f \\\\\\( -name \"*.ts\" -o -name \"*.tsx\" -o -name \"*.js\" -o -name \"*.jsx\" -o -name \"*.vue\" -o -name \"*.java\" -o -name \"*.cs\" \\\\\\) -not -path \"*/node_modules/*\" -not -path \"*/.git/*\")",
+      "Bash(find \"/c/Users/Rujiroje/OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd/MyData/IT/TST/Target/2025/Eiken Weight/Eikensystem\" -type f \\\\\\( -name \"*Calculator*\" -o -name \"*Report*\" \\\\\\) -not -path \"*/node_modules/*\")",
+      "Bash(wc -l \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\frontend\\\\src\\\\ui\\\\LeaderDashboard.tsx\")",
+      "Bash(ls -la \"c:\\\\Users\\\\Rujiroje\\\\OneDrive - Toyo Seikan \\(Thailand\\) Co.,Ltd\\\\MyData\\\\IT\\\\TST\\\\Target\\\\2025\\\\Eiken Weight\\\\Eikensystem\\\\frontend\\\\src\\\\ui\")"
+    ]
+  }
+}

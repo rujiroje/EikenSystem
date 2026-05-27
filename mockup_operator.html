@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mockup: หน้าชั่งน้ำหนัก Operator</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; padding: 16px; font-size: 14px; }
+
+  /* Tab switcher */
+  .tab-bar { display: flex; gap: 0; margin-bottom: 24px; }
+  .tab-btn {
+    padding: 10px 32px; font-size: 15px; font-weight: 600; cursor: pointer;
+    border: 1px solid #d9d9d9; background: #fff; color: #555;
+    transition: all 0.2s;
+  }
+  .tab-btn:first-child { border-radius: 6px 0 0 6px; }
+  .tab-btn:last-child  { border-radius: 0 6px 6px 0; border-left: none; }
+  .tab-btn.active { background: #1677ff; color: #fff; border-color: #1677ff; }
+
+  /* Screen */
+  .screen { display: none; max-width: 980px; margin: 0 auto; }
+  .screen.active { display: flex; flex-direction: column; gap: 12px; }
+
+  /* Card */
+  .card {
+    background: #fff; border: 1px solid #d9d9d9; border-radius: 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.06);
+  }
+  .card-head {
+    padding: 8px 16px; border-bottom: 1px solid #f0f0f0;
+    font-weight: 600; font-size: 14px; display: flex; align-items: center;
+    justify-content: space-between; background: #fafafa; border-radius: 8px 8px 0 0;
+  }
+  .card-body { padding: 12px 16px; }
+
+  /* Tags */
+  .tag {
+    display: inline-flex; align-items: center; padding: 2px 8px;
+    border-radius: 4px; font-size: 13px; font-weight: 500; line-height: 1.6;
+  }
+  .tag-blue    { background: #e6f4ff; color: #0958d9; border: 1px solid #91caff; }
+  .tag-geek    { background: #f0f5ff; color: #2f54eb; border: 1px solid #adc6ff; }
+  .tag-green   { background: #f6ffed; color: #389e0d; border: 1px solid #b7eb8f; }
+  .tag-gold    { background: #fffbe6; color: #d48806; border: 1px solid #ffe58f; }
+  .tag-red     { background: #fff2f0; color: #cf1322; border: 1px solid #ffa39e; }
+  .tag-orange  { background: #fff7e6; color: #d46b08; border: 1px solid #ffd591; }
+  .tag-purple  { background: #f9f0ff; color: #531dab; border: 1px solid #d3adf7; }
+  .tag-lg {
+    padding: 6px 14px; font-size: 15px; font-weight: 700; border-radius: 6px;
+    display: inline-flex; align-items: center;
+  }
+  .tag-workflow-normal { background: #1677ff; color: #fff; }
+  .tag-workflow-red    { background: #ff4d4f; color: #fff; }
+  .tag-workflow-yellow { background: #faad14; color: #fff; }
+
+  /* Form row */
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+  /* Inputs & Selects */
+  select, input[type=text], input[type=number] {
+    height: 32px; border: 1px solid #d9d9d9; border-radius: 6px;
+    padding: 0 10px; font-size: 14px; background: #fff; outline: none;
+  }
+  select:disabled, input:disabled {
+    background: #f5f5f5; color: #aaa; cursor: not-allowed;
+  }
+  select { min-width: 200px; cursor: pointer; }
+  input[type=text]   { width: 220px; }
+  input[type=number] { width: 140px; }
+
+  /* Buttons */
+  .btn {
+    height: 32px; padding: 0 15px; border-radius: 6px; border: 1px solid #d9d9d9;
+    cursor: pointer; font-size: 14px; font-weight: 500; display: inline-flex;
+    align-items: center; gap: 6px; background: #fff; color: #333; transition: all 0.2s;
+  }
+  .btn-primary { background: #1677ff; color: #fff; border-color: #1677ff; }
+  .btn-primary:hover { background: #0958d9; }
+  .btn-small { height: 24px; padding: 0 10px; font-size: 12px; }
+  .btn-danger { background: #ff4d4f; color: #fff; border-color: #ff4d4f; }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Spec row */
+  .spec-row { display: flex; flex-wrap: wrap; gap: 8px; font-size: 16px; }
+  .spec-tag {
+    padding: 4px 10px; border-radius: 6px; font-size: 15px; font-weight: 600;
+    display: inline-flex; align-items: center;
+  }
+  .spec-red    { background: #fff2f0; color: #cf1322; border: 1px solid #ffa39e; }
+  .spec-gold   { background: #fffbe6; color: #d48806; border: 1px solid #ffe58f; }
+  .spec-green  { background: #f6ffed; color: #389e0d; border: 1px solid #b7eb8f; }
+  .spec-orange { background: #fff7e6; color: #d46b08; border: 1px solid #ffd591; }
+  .spec-blue   { background: #e6f4ff; color: #0958d9; border: 1px solid #91caff; }
+
+  /* Sticky summary */
+  .sticky-summary {
+    position: sticky; top: 8px; z-index: 20;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .sticky-inner {
+    display: grid; grid-template-columns: 1fr auto auto;
+    align-items: center; gap: 16px;
+    background: #fff; border: 1px solid #e5e7eb; border-radius: 10px;
+    padding: 8px 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+  }
+  .box-indicator {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 6px 12px; border-radius: 10px; min-width: 120px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.12);
+  }
+  .box-outer { background: #e6f4ff; border: 2px solid #003a8c; }
+  .box-inner { background: #f9f0ff; border: 2px solid #531dab; }
+  .box-label { font-size: 12px; font-weight: 600; }
+  .box-outer .box-label { color: #003a8c; }
+  .box-inner .box-label { color: #531dab; }
+  .box-value { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .box-outer .box-value { color: #003a8c; }
+  .box-inner .box-value { color: #531dab; }
+  .box-group { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .box-pair { display: flex; align-items: center; gap: 10px; }
+  .status-bar {
+    min-height: 56px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 26px;
+    transition: background 0.3s;
+  }
+  .status-green  { background: #14532d; color: #fff; }
+  .status-yellow { background: #facc15; color: #000; }
+  .status-red    { background: #b91c1c; color: #fff; }
+  .status-idle   { background: #64748b; color: #fff; }
+
+  /* Capture area */
+  .capture-input {
+    width: 420px; height: 32px; border: 1px solid #d9d9d9; border-radius: 6px;
+    padding: 0 10px; font-size: 14px; background: #fff;
+  }
+  .capture-hint { margin-top: 8px; color: #888; font-size: 12px; }
+
+  /* Alert */
+  .alert {
+    padding: 8px 12px; border-radius: 6px; display: flex; align-items: flex-start;
+    gap: 8px; font-size: 13px;
+  }
+  .alert-warning { background: #fffbe6; border: 1px solid #ffe58f; color: #7c4a03; }
+  .alert-info    { background: #e6f4ff; border: 1px solid #91caff; color: #003a8c; }
+  .alert-error   { background: #fff2f0; border: 1px solid #ffa39e; color: #820014; }
+  .alert-success { background: #f6ffed; border: 1px solid #b7eb8f; color: #135200; }
+  .alert-icon { font-size: 14px; margin-top: 1px; }
+
+  /* Checkbox */
+  .check-row { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+  /* History table */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #fafafa; padding: 6px 10px; text-align: left; border-bottom: 1px solid #f0f0f0; font-weight: 600; }
+  td { padding: 6px 10px; border-bottom: 1px solid #f0f0f0; }
+  tr:last-child td { border-bottom: none; }
+  .td-green  { color: #389e0d; font-weight: 700; }
+  .td-yellow { color: #d48806; font-weight: 700; }
+  .td-red    { color: #cf1322; font-weight: 700; }
+
+  /* Section title */
+  h2 { font-size: 16px; color: #333; margin-bottom: 4px; font-weight: 700; }
+  .mode-badge {
+    display: inline-block; padding: 2px 12px; border-radius: 20px;
+    font-size: 12px; font-weight: 700; margin-left: 8px;
+  }
+  .mode-single { background: #e6f4ff; color: #0958d9; }
+  .mode-double { background: #fff0f6; color: #c41d7f; }
+
+  /* Divider */
+  .divider { border: none; border-top: 2px dashed #e5e7eb; margin: 8px 0; }
+  .note { font-size: 12px; color: #999; font-style: italic; }
+</style>
+</head>
+<body>
+
+<h2 style="margin-bottom:12px">
+  Mockup: หน้าชั่งน้ำหนัก (Operator)
+  <span class="mode-badge mode-single">SINGLE</span>
+  <span class="mode-badge mode-double">DOUBLE</span>
+</h2>
+<p class="note" style="margin-bottom:16px">* นี่คือตัวอย่าง UI จาก code จริง — สลับโหมดด้วยปุ่มด้านล่าง</p>
+
+<!-- Tab switcher -->
+<div class="tab-bar">
+  <button class="tab-btn active" onclick="switchTab('single')">⚖ SINGLE (ชั่ง 1 ครั้ง)</button>
+  <button class="tab-btn" onclick="switchTab('double')">⚖⚖ DOUBLE (ชั่ง 2 ครั้ง)</button>
+</div>
+
+<!-- ==================== SINGLE MODE ==================== -->
+<div id="screen-single" class="screen active">
+
+  <!-- Header -->
+  <div class="card">
+    <div class="card-body" style="padding:10px 16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <strong style="font-size:16px">ชั่งน้ำหนัก</strong>
+        <div style="display:flex;gap:8px">
+          <span class="tag-lg tag-workflow-normal">ชั่งปกติ</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 1: Product / Scale / Lot -->
+  <div class="card">
+    <div class="card-head">
+      1) Product / Scale / Lot
+      <span class="tag tag-geek">operator01</span>
+      <span class="tag tag-blue">OPERATOR</span>
+    </div>
+    <div class="card-body">
+      <div class="row">
+        <select disabled>
+          <option>P001 - กระป๋อง 360ml (SINGLE)</option>
+        </select>
+        <select disabled>
+          <option>SC-01 - เครื่องชั่ง A ไลน์ 1</option>
+        </select>
+        <input type="text" value="20250324-A" disabled />
+        <button class="btn">แก้ไข</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ประวัติการชั่ง -->
+  <div class="card">
+    <div class="card-head">
+      ประวัติการชั่ง
+      <button class="btn btn-small">รีเฟรช</button>
+    </div>
+    <div class="card-body" style="padding:8px 16px">
+      <table>
+        <thead>
+          <tr>
+            <th>Inner</th><th>Outer</th><th>น้ำหนัก (g)</th><th>สถานะ</th><th>เวลา</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>0001</td><td>001</td><td>352.10</td><td class="td-green">GREEN</td><td>08:12:01</td></tr>
+          <tr><td>0002</td><td>001</td><td>351.80</td><td class="td-green">GREEN</td><td>08:13:45</td></tr>
+          <tr><td>0003</td><td>001</td><td>349.50</td><td class="td-yellow">YELLOW</td><td>08:15:02</td></tr>
+          <tr><td>0004</td><td>001</td><td>350.20</td><td class="td-green">GREEN</td><td>08:16:30</td></tr>
+          <tr><td>0005</td><td>001</td><td>352.60</td><td class="td-green">GREEN</td><td>08:18:10</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Card 2: สเปค -->
+  <div class="card">
+    <div class="card-head">2) สเปค (ตรวจสอบให้ถูกต้อง)</div>
+    <div class="card-body">
+      <div class="spec-row">
+        <span class="spec-tag spec-red" title="น้ำหนักต่ำสุดที่ยังถือว่า OK">Min: 348.00</span>
+        <span class="spec-tag spec-gold" title="ขอบเขตเหลืองด้านล่าง">Dmin: 349.00</span>
+        <span class="spec-tag spec-green" title="ค่าเป้าหมาย">Std: 352.00</span>
+        <span class="spec-tag spec-gold" title="ขอบเขตเหลืองด้านบน">Dmax: 355.00</span>
+        <span class="spec-tag spec-red" title="น้ำหนักสูงสุดที่ยังถือว่า OK">Max: 356.00</span>
+        <span class="spec-tag spec-orange" title="จำนวน YELLOW ต่อเนื่องปัจจุบัน">Yellow Count: 0</span>
+        <span class="spec-tag spec-blue" title="จำนวน YELLOW ที่เหลือก่อนล็อก">Remaining: 5</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sticky Summary -->
+  <div class="sticky-summary">
+    <div class="sticky-inner">
+      <!-- ซ้าย: info tags -->
+      <div class="row">
+        <span class="tag tag-geek">P001</span>
+        <span class="tag" style="background:#f5f5f5;border:1px solid #d9d9d9">กระป๋อง 360ml</span>
+        <span class="tag tag-blue">SC-01 - เครื่องชั่ง A</span>
+        <span class="tag tag-purple">Lot: 20250324-A</span>
+      </div>
+      <!-- กลาง: Outer/Inner -->
+      <div class="box-group">
+        <div class="box-pair">
+          <div class="box-indicator box-outer">
+            <div class="box-label">Outer</div>
+            <div class="box-value">001</div>
+          </div>
+          <div class="box-indicator box-inner">
+            <div class="box-label">Inner</div>
+            <div class="box-value">0006</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-small">แก้ไข</button>
+        </div>
+      </div>
+      <!-- ขวา: workflow status -->
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn btn-small">Refresh Last Box</button>
+        <span class="tag-lg tag-workflow-normal">ชั่งปกติ</span>
+      </div>
+    </div>
+    <!-- Status bar -->
+    <div class="status-bar status-green">สถานะ: GREEN</div>
+  </div>
+
+  <!-- Card 3: Scale Capture -->
+  <div class="card">
+    <div class="card-head">3) Scale Capture (ค่าจากเครื่องชั่ง)</div>
+    <div class="card-body">
+      <div class="row" style="align-items:flex-start">
+        <label class="check-row"><input type="checkbox" checked /> Enable</label>
+        <button class="btn">Clear</button>
+        <input class="capture-input" type="text" placeholder="วาง/พิมพ์จากเครื่องชั่ง: น้ำหนัก [Enter] เวลา [Enter] วันที่ [Enter]" />
+      </div>
+      <div class="capture-hint">รับค่า 3 บรรทัด: 1) น้ำหนัก 2) เวลา (เช่น 08:12) 3) วันที่ (MM-DD-YYYY เช่น 03-24-2025)</div>
+      <div style="margin-top:6px;color:#888;font-size:12px">Time: 08:18:10 | Date: 03-24-2025 | รับค่าจากเครื่องชั่งครบถ้วน (OK)</div>
+    </div>
+  </div>
+
+  <!-- Card 4: Manual Override (SINGLE) -->
+  <div class="card">
+    <div class="card-head">
+      4) Manual Override (กรณีพิมพ์เอง)
+      <span style="color:#999;font-size:12px;font-weight:400">จะยกเลิกการใช้งานจริง</span>
+    </div>
+    <div class="card-body">
+      <div class="row">
+        <input type="number" value="352.60" placeholder="Manual weight" />
+        <button class="btn btn-primary">บันทึก Manual</button>
+        <label class="check-row"><input type="checkbox" checked /> Auto save GREEN/YELLOW</label>
+        <span class="tag tag-green">สถานะ: GREEN</span>
+      </div>
+      <div style="margin-top:8px">
+        <div class="alert alert-success">
+          <span class="alert-icon">✅</span>
+          GREEN: บันทึกแล้ว
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- end screen-single -->
+
+
+<!-- ==================== DOUBLE MODE ==================== -->
+<div id="screen-double" class="screen">
+
+  <!-- Header -->
+  <div class="card">
+    <div class="card-body" style="padding:10px 16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <strong style="font-size:16px">ชั่งน้ำหนัก</strong>
+        <div style="display:flex;gap:8px">
+          <span class="tag-lg tag-workflow-yellow">Yellow x5</span>
+          <span class="tag-lg tag-workflow-normal" style="background:#7cb305">รอ Apply Std</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Card 1: Product / Scale / Lot -->
+  <div class="card">
+    <div class="card-head">
+      1) Product / Scale / Lot
+      <span class="tag tag-geek">operator01</span>
+      <span class="tag tag-blue">OPERATOR</span>
+    </div>
+    <div class="card-body">
+      <div class="row">
+        <select disabled>
+          <option>P002 - กระป๋อง 250ml (DOUBLE)</option>
+        </select>
+        <select disabled>
+          <option>SC-02 - เครื่องชั่ง B ไลน์ 2</option>
+        </select>
+        <input type="text" value="20250324-B" disabled />
+        <button class="btn">แก้ไข</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ประวัติการชั่ง -->
+  <div class="card">
+    <div class="card-head">
+      ประวัติการชั่ง
+      <button class="btn btn-small">รีเฟรช</button>
+    </div>
+    <div class="card-body" style="padding:8px 16px">
+      <table>
+        <thead>
+          <tr>
+            <th>Inner</th><th>Outer</th><th>นน. 1 (g)</th><th>นน. 2 (g)</th><th>รวม (g)</th><th>สถานะ</th><th>เวลา</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>0001</td><td>001</td><td>124.10</td><td>124.30</td><td>248.40</td><td class="td-green">GREEN</td><td>09:01:00</td></tr>
+          <tr><td>0002</td><td>001</td><td>123.80</td><td>124.00</td><td>247.80</td><td class="td-yellow">YELLOW</td><td>09:02:30</td></tr>
+          <tr><td>0003</td><td>001</td><td>123.50</td><td>123.70</td><td>247.20</td><td class="td-yellow">YELLOW</td><td>09:04:05</td></tr>
+          <tr><td>0004</td><td>001</td><td>123.40</td><td>123.60</td><td>247.00</td><td class="td-yellow">YELLOW</td><td>09:05:20</td></tr>
+          <tr><td>0005</td><td>001</td><td>123.20</td><td>123.40</td><td>246.60</td><td class="td-yellow">YELLOW</td><td>09:06:45</td></tr>
+          <tr><td>0006</td><td>001</td><td>123.00</td><td>123.20</td><td>246.20</td><td class="td-yellow">YELLOW</td><td>09:08:00</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Card 2: สเปค -->
+  <div class="card">
+    <div class="card-head">2) สเปค (ตรวจสอบให้ถูกต้อง)</div>
+    <div class="card-body">
+      <div class="spec-row">
+        <span class="spec-tag spec-red">Min: 245.00</span>
+        <span class="spec-tag spec-gold">Dmin: 246.00</span>
+        <span class="spec-tag spec-green">Std: 248.00</span>
+        <span class="spec-tag spec-gold">Dmax: 250.00</span>
+        <span class="spec-tag spec-red">Max: 251.00</span>
+        <span class="spec-tag spec-orange">Yellow Count: 5</span>
+        <span class="spec-tag spec-blue">Remaining: 0</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sticky Summary -->
+  <div class="sticky-summary">
+    <div class="sticky-inner">
+      <div class="row">
+        <span class="tag tag-geek">P002</span>
+        <span class="tag" style="background:#f5f5f5;border:1px solid #d9d9d9">กระป๋อง 250ml</span>
+        <span class="tag tag-blue">SC-02 - เครื่องชั่ง B</span>
+        <span class="tag tag-purple">Lot: 20250324-B</span>
+      </div>
+      <div class="box-group">
+        <div class="box-pair">
+          <div class="box-indicator box-outer">
+            <div class="box-label">Outer</div>
+            <div class="box-value">001</div>
+          </div>
+          <div class="box-indicator box-inner">
+            <div class="box-label">Inner</div>
+            <div class="box-value">0007</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-primary btn-small" disabled>แก้ไข</button>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <button class="btn btn-small">Refresh Last Box</button>
+        <span class="tag-lg tag-workflow-yellow">Yellow x5</span>
+        <span class="tag-lg" style="background:#7cb305;color:#fff;padding:6px 12px;border-radius:6px;font-size:15px;font-weight:700">รอ Apply Std</span>
+      </div>
+    </div>
+    <!-- Status bar - locked state -->
+    <div class="status-bar status-yellow">สถานะ: YELLOW</div>
+  </div>
+
+  <!-- Card 3: Scale Capture -->
+  <div class="card">
+    <div class="card-head">3) Scale Capture (ค่าจากเครื่องชั่ง)</div>
+    <div class="card-body">
+      <div class="row" style="align-items:flex-start">
+        <label class="check-row"><input type="checkbox" checked /> Enable</label>
+        <button class="btn">Clear</button>
+        <input class="capture-input" type="text" placeholder="วาง/พิมพ์จากเครื่องชั่ง: น้ำหนัก [Enter] เวลา [Enter] วันที่ [Enter]" />
+      </div>
+      <div class="capture-hint">รับค่า 3 บรรทัด: 1) น้ำหนัก 2) เวลา (เช่น 08:12) 3) วันที่ (MM-DD-YYYY)</div>
+    </div>
+  </div>
+
+  <!-- Card 4: Manual Override (DOUBLE) -->
+  <div class="card">
+    <div class="card-head">
+      4) Manual Override (กรณีพิมพ์เอง)
+      <span style="color:#999;font-size:12px;font-weight:400">จะยกเลิกการใช้งานจริง</span>
+    </div>
+    <div class="card-body">
+      <div class="row">
+        <input type="number" placeholder="นน. 1" value="123.00" />
+        <input type="number" placeholder="นน. 2" value="123.20" />
+        <button class="btn btn-primary" disabled>บันทึก Manual (Double)</button>
+        <label class="check-row"><input type="checkbox" checked /> Auto save GREEN/YELLOW</label>
+        <span class="tag tag-gold">สถานะ: YELLOW</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Alert: รอ QA -->
+  <div class="alert alert-warning" style="border-radius:8px;padding:10px 16px">
+    <span class="alert-icon">⚠️</span>
+    เหลืองครบ 5 ครั้ง: คำนวณ Std ใหม่ = <strong>246.80</strong> | รอ QA ตรวจสอบและอนุมัติ (Approval ID: 42)
+  </div>
+
+</div><!-- end screen-double -->
+
+<!-- ==================== Legend ==================== -->
+<div style="max-width:980px;margin:16px auto 0;background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px">
+  <strong style="font-size:14px">Legend: สถานะ Workflow Tag</strong>
+  <div class="row" style="margin-top:8px;gap:10px">
+    <span class="tag-lg tag-workflow-normal">ชั่งปกติ</span>
+    <span class="tag-lg tag-workflow-yellow">Yellow x5</span>
+    <span class="tag-lg" style="background:#d4b106;color:#fff;padding:6px 12px;border-radius:6px;font-size:15px;font-weight:700">เก็บ 4-5</span>
+    <span class="tag-lg" style="background:#7cb305;color:#fff;padding:6px 12px;border-radius:6px;font-size:15px;font-weight:700">รอ Apply Std</span>
+    <span class="tag-lg tag-workflow-red">RED รอ Leader</span>
+  </div>
+  <hr class="divider" style="margin-top:12px" />
+  <strong style="font-size:14px">Legend: Status Bar</strong>
+  <div class="row" style="margin-top:8px;gap:8px">
+    <div style="background:#14532d;color:#fff;padding:6px 20px;border-radius:8px;font-weight:700">GREEN</div>
+    <div style="background:#facc15;color:#000;padding:6px 20px;border-radius:8px;font-weight:700">YELLOW</div>
+    <div style="background:#b91c1c;color:#fff;padding:6px 20px;border-radius:8px;font-weight:700">RED</div>
+    <div style="background:#64748b;color:#fff;padding:6px 20px;border-radius:8px;font-weight:700">- (ยังไม่ชั่ง)</div>
+  </div>
+</div>
+
+<script>
+  function switchTab(mode) {
+    document.querySelectorAll('.tab-btn').forEach((b, i) => {
+      b.classList.toggle('active', (i === 0 && mode === 'single') || (i === 1 && mode === 'double'))
+    })
+    document.getElementById('screen-single').classList.toggle('active', mode === 'single')
+    document.getElementById('screen-double').classList.toggle('active', mode === 'double')
+  }
+</script>
+</body>
+</html>

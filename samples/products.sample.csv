@@ -1,0 +1,4 @@
+productCode,productName,weightPerPiece,quantityPerMeasurement,tolerance,innerBoxQuantity,unit,description
+P001,Sample Product,10,5,1,,g,
+P100,Cap 100,2.5,20,1,100,pcs,Cap type 100
+P200,Cap 200,3,10,0.5,50,pcs,Cap type 200

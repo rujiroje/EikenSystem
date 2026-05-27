@@ -1,0 +1,15 @@
+html, body, #root {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+/* Ensure AntD Card and containers don't push horizontal overflow */
+.ant-card-body {
+  overflow-x: hidden;
+}
+
+/* Modal should fit viewport width on smaller screens */
+.ant-modal {
+  max-width: 90vw;
+}

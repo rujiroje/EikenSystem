@@ -1,0 +1,71 @@
+using System;
+using System.Net;
+using System.Text;
+using System.Threading;
+using DPUruNet; // จาก DigitalPersona SDK
+
+class Program {
+    static Reader _reader;
+
+    static void Main(string[] args) {
+        // 1. เชื่อมต่อเครื่องสแกน
+        ReaderCollection readers = ReaderCollection.GetReaders();
+        if (readers.Count > 0) {
+            _reader = readers[0];
+            Console.WriteLine("Scanner found: " + _reader.Description.Name);
+        } else {
+            Console.WriteLine("No scanner found!");
+            return;
+        }
+
+        // 2. สร้าง HTTP Server
+        HttpListener listener = new HttpListener();
+        listener.Prefixes.Add("http://localhost:8090/capture/");
+        listener.Start();
+        Console.WriteLine("Agent running on http://localhost:8090/capture/ ...");
+
+        while (true) {
+            var context = listener.GetContext();
+            ThreadPool.QueueUserWorkItem((o) => HandleRequest(context));
+        }
+    }
+
+    static void HandleRequest(HttpListenerContext context) {
+        // Handle CORS (เพื่อให้ Browser เรียกข้าม Domain ได้)
+        context.Response.Headers.Add("Access-Control-Allow-Origin", "*");
+        context.Response.Headers.Add("Access-Control-Allow-Methods", "POST, GET, OPTIONS");
+        context.Response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
+
+        if (context.Request.HttpMethod == "OPTIONS") {
+            context.Response.Close();
+            return;
+        }
+
+        string responseString = "{}";
+        try {
+            // 3. สั่งสแกนนิ้ว
+            if (_reader.Open(Constants.CapturePriority.DP_PRIORITY_COOPERATIVE)) {
+                Console.WriteLine("Place finger on reader...");
+                var result = _reader.Capture(Constants.Formats.Fid.ANSI, Constants.CaptureProcessing.DP_IMG_PROC_DEFAULT, 5000, _reader.Capabilities.Resolutions[0]);
+                
+                if (result.ResultCode == Constants.ResultCode.DP_SUCCESS && result.Data != null) {
+                    // แปลงข้อมูลนิ้วมือ (FMD) เป็น Base64
+                    var fmd = FeatureExtraction.CreateFmdFromFid(result.Data, Constants.Formats.Fmd.ANSI).Data;
+                    string base64 = Convert.ToBase64String(fmd.Bytes);
+                    responseString = "{ \"template\": \"" + base64 + "\" }";
+                    Console.WriteLine("Scan success!");
+                } else {
+                    responseString = "{ \"error\": \"Scan failed or timeout\" }";
+                }
+                _reader.Dispose(); // ปิดการเชื่อมต่อชั่วคราวเพื่อให้โปรแกรมอื่นใช้ได้ถ้าจำเป็น
+            }
+        } catch (Exception ex) {
+            responseString = "{ \"error\": \"" + ex.Message + "\" }";
+        }
+
+        byte[] buffer = Encoding.UTF8.GetBytes(responseString);
+        context.Response.ContentLength64 = buffer.Length;
+        context.Response.OutputStream.Write(buffer, 0, buffer.Length);
+        context.Response.OutputStream.Close();
+    }
+}

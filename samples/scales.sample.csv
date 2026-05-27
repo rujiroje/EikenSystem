@@ -1,0 +1,3 @@
+scaleId,scaleName,location,description,isActive
+S001,Scale A,Line 1,,true
+S002,Scale B,Line 2,,true

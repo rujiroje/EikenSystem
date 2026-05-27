@@ -1,0 +1,156 @@
+สรุปรายละเอียดทั้งหมดของระบบตรวจสอบน้ำหนักจากเครื่องชั่ง (Eiken Weight System) ที่ได้ปรับปรุงล่าสุด:
+
+I. Database Structure:
+
+ตาราง Product:
+ProductCode (VARCHAR, Primary Key): รหัสสินค้า
+ProductName (VARCHAR): ชื่อสินค้า
+WeightPerPiece (DECIMAL): น้ำหนักต่อชิ้น (WghPcs)
+QuantityPerMeasurement (INT): จำนวนชิ้นต่อการวัด (Qty)
+StandardWeight (DECIMAL): น้ำหนักมาตรฐานรวม (คำนวณจาก WeightPerPiece * QuantityPerMeasurement)
+MinWeight (DECIMAL): น้ำหนักต่ำสุดที่ยอมรับได้
+MaxWeight (DECIMAL): น้ำหนักสูงสุดที่ยอมรับได้
+Tolerance (DECIMAL): ค่าความคลาดเคลื่อนที่ยอมรับได้ (DevW)
+InnerBoxQuantity (INT): จำนวนสินค้าต่อกล่องใน
+Unit (VARCHAR): หน่วยของน้ำหนัก
+Description (TEXT): รายละเอียดเพิ่มเติม
+ตาราง Measurement:
+MeasurementID (INT, Primary Key, Auto-increment): รหัสการตรวจวัด
+LotNo (VARCHAR): หมายเลข Lot
+ProductCode (VARCHAR, Foreign Key): รหัสสินค้า
+ScaleID (VARCHAR, Foreign Key): รหัสเครื่องชั่ง
+Weight (DECIMAL): น้ำหนักที่วัดได้
+Timestamp (DATETIME): วันที่และเวลาที่ชั่ง
+OperatorName (VARCHAR): ชื่อผู้ปฏิบัติงาน
+OuterBoxNumber (VARCHAR): หมายเลขกล่องนอก
+InnerBoxOrder (VARCHAR): ลำดับกล่องใน (รูปแบบ "0001")
+Note (TEXT): หมายเหตุเพิ่มเติม
+IsForStandardAdjustment (BOOLEAN): ระบุว่าการชั่งครั้งนี้เป็นการชั่งเพื่อปรับค่ามาตรฐานหรือไม่
+(Field อื่นๆ จากตารางเดิม - ถ้าจำเป็น)
+ตาราง ChangeLog:
+ChangeID (INT, Primary Key, Auto-increment): รหัสการเปลี่ยนแปลง
+MeasurementID (INT, Foreign Key): รหัสการตรวจวัดที่ถูกเปลี่ยนแปลง
+FieldName (VARCHAR): ชื่อ Field ที่ถูกแก้ไข
+OldValue (VARCHAR): ค่าเดิม
+NewValue (VARCHAR): ค่าใหม่
+ChangeReason (TEXT): เหตุผลในการเปลี่ยนแปลง
+ChangedBy (INT, Foreign Key): รหัสผู้ใช้ที่ทำการเปลี่ยนแปลง
+ChangedAt (DATETIME): วันที่และเวลาที่เปลี่ยนแปลง
+ตาราง CleaningLog:
+CleaningID (INT, Primary Key, Auto-increment): รหัสการทำความสะอาด
+ScaleID (VARCHAR, Foreign Key): รหัสเครื่องชั่ง
+CleaningTime (DATETIME): เวลาที่ทำความสะอาด
+CleaningMethod (VARCHAR): วิธีการทำความสะอาด
+CleanedBy (VARCHAR): ผู้ที่ทำความสะอาด
+Result (VARCHAR): ผลการตรวจสอบ
+Note (TEXT): หมายเหตุเพิ่มเติม
+VerifiedBy (INT, Foreign Key): รหัสผู้ใช้ของ Leader ที่ตรวจสอบ
+VerifiedAt (DATETIME): วันที่และเวลาที่ตรวจสอบ
+ตาราง StandardWeightLog:
+LogID (INT, Primary Key, Auto-increment): รหัส Log
+ProductCode (VARCHAR, Foreign Key): รหัสสินค้า
+OldStandardWeight (DECIMAL): ค่ามาตรฐานเดิม
+NewStandardWeight (DECIMAL): ค่ามาตรฐานใหม่
+AverageWeight1 (DECIMAL): ค่าเฉลี่ย 3 ครั้งแรก
+AverageWeight2 (DECIMAL): ค่าเฉลี่ย 5 ครั้ง
+OuterBoxNumber (VARCHAR): หมายเลขกล่องนอกที่เกี่ยวข้อง
+InnerBoxOrder (VARCHAR): ลำดับกล่องในที่เกี่ยวข้อง
+ChangedBy (INT, Foreign Key): รหัสผู้ใช้ที่ทำการเปลี่ยนแปลง
+ChangedAt (DATETIME): วันที่และเวลาที่เปลี่ยนแปลง
+Reason (TEXT): เหตุผลในการเปลี่ยนแปลง
+ตาราง Users:
+UserID (INT, Primary Key, Auto-increment): รหัสผู้ใช้
+Username (VARCHAR, Unique): ชื่อผู้ใช้
+Password (VARCHAR): รหัสผ่าน (ต้องเข้ารหัส)
+Role (VARCHAR): Role ของผู้ใช้ (Operator, Leader, QA)
+FirstName (VARCHAR): ชื่อ
+LastName (VARCHAR): นามสกุล
+ตาราง Notifications:
+NotificationID (INT, Primary Key, Auto-increment): รหัสการแจ้งเตือน
+UserID (INT, Foreign Key): รหัสผู้ใช้ที่ได้รับการแจ้งเตือน
+NotificationType (VARCHAR): ประเภทของการแจ้งเตือน
+ScaleID (VARCHAR): หมายเลขเครื่องชั่งที่เกิดปัญหา
+ProductCode (VARCHAR): รหัสสินค้าที่เกิดปัญหา
+Details (TEXT): รายละเอียดของการแจ้งเตือน
+Timestamp (DATETIME): วันที่และเวลาที่แจ้งเตือน
+Status (VARCHAR): สถานะ
+ตาราง Scale (เครื่องชั่ง):
+ScaleID (VARCHAR, Primary Key): หมายเลขเครื่องชั่ง
+ScaleName (VARCHAR): ชื่อเครื่องชั่ง
+Location (VARCHAR): สถานที่ตั้ง
+Description (TEXT): รายละเอียดเพิ่มเติม
+IsActive (BOOLEAN): สถานะ (เปิดใช้งาน/ปิดใช้งาน)
+II. Calculation Methods:
+
+StandardWeight: StandardWeight = WeightPerPiece * QuantityPerMeasurement
+MinWeight & MaxWeight:
+MinWeight = StandardWeight - (WeightPerPiece / 2)
+MaxWeight = StandardWeight + (WeightPerPiece / 2)
+Tolerance (DMin & DMax):
+DMin = StandardWeight - Tolerance
+DMax = StandardWeight + Tolerance
+III. Logic การทำงานของระบบ:
+
+Initialization: ระบบจะกำหนดค่าเริ่มต้นของตัวนับ (Yellow Count) เป็น 0
+Operator Login: Operator Login เข้าสู่ระบบ (ด้วย Email Verification หรือ Security Questions)
+การเลือก Product, เครื่องชั่ง, และ LotNo: Operator เลือก Product, หมายเลขเครื่องชั่ง, และ LotNo
+การตรวจสอบ Session: ระบบตรวจสอบว่ามี Session ค้างอยู่หรือไม่ โดยพิจารณาจาก ScaleID, ProductCode, MeasurementDate, และ LotNo
+ถ้ามี Session ค้างอยู่ (และ UserID ตรงกัน): ระบบจะดึงข้อมูล LastOuterBoxNumber และ LastInnerBoxOrder มาแสดง
+ถ้ามี Session ค้างอยู่ (แต่ UserID ไม่ตรงกัน): ระบบจะแจ้งเตือนให้เลือกทำงานต่อ หรือเริ่ม Session ใหม่
+ถ้าไม่มี Session ค้างอยู่: ระบบจะตั้งค่าเริ่มต้น OuterBoxNumber = "001" และ InnerBoxOrder = "0001"
+การชั่งน้ำหนัก: Operator ทำการชั่งน้ำหนัก
+การตรวจสอบ: ระบบตรวจสอบ Weight เทียบกับ MinWeight, MaxWeight, DMin, และ DMax และแสดงไฟสถานะ:
+สีเขียว (Green): DMin <= Weight <= DMax
+สีเหลือง (Yellow): (Weight < DMin && Weight >= MinWeight) || (Weight > DMax && Weight <= MaxWeight)
+สีแดง (Red): Weight < MinWeight หรือ Weight > MaxWeight
+การจัดการตัวนับ (Yellow Count):
+ถ้าไฟสถานะเป็นสีเหลือง: ระบบจะเพิ่มค่าตัวนับขึ้น 1
+ถ้าไฟสถานะเป็นสีเขียว: ระบบจะตั้งค่าตัวนับเป็น 0
+ถ้าไฟสถานะเป็นสีแดง: ระบบจะเปลี่ยนไฟสถานะเป็นสีแดง Lock ไม่ให้บันทึกข้อมูล และแจ้งเตือน Leader
+ถ้า Yellow Count >= 3: ระบบจะเปลี่ยนไฟสถานะเป็นสีแดง Lock ไม่ให้บันทึกข้อมูล และแจ้งเตือน Leader
+การแจ้งเตือน QA: ระบบจะส่งการแจ้งเตือนไปยัง QA เพื่อตรวจสอบและอนุมัติการเปลี่ยนแปลงค่ามาตรฐาน (ถ้า Yellow Count >= 3)
+การบันทึกข้อมูล: ระบบจะบันทึกข้อมูลการชั่งลงในตาราง Measurement (ถ้าไฟสถานะไม่เป็นสีแดง)
+Auto-Increment:
+ระบบตรวจสอบว่า InnerBoxOrder ถึง InnerBoxQuantity หรือยัง
+ถ้ายังไม่ถึง: ระบบจะเพิ่ม InnerBoxOrder ขึ้นมา 1 (แปลงเป็น Integer, เพิ่มค่า, แปลงกลับเป็น String "000x")
+ถ้าถึงแล้ว: ระบบจะเพิ่ม OuterBoxNumber ขึ้นมา 1 และตั้งค่า InnerBoxOrder เป็น "0001"
+Navigation:
+Operator สามารถกด "ข้าม" เพื่อไปยัง InnerBoxOrder ถัดไปได้ ถ้า InnerBoxOrder ถัดไปยังไม่มีข้อมูลการชั่ง
+Operator สามารถกด "ย้อนกลับ" เพื่อไปยัง InnerBoxOrder ก่อนหน้าได้ ถ้า InnerBoxOrder หลังจากที่ข้ามไปยัง ไม่มี ข้อมูลการชั่ง
+IV. รายละเอียดการทำงานแต่ละ Role:
+
+Operator:
+Login เข้าสู่ระบบ
+เลือก Product, เครื่องชั่ง, และ LotNo
+ระบบแสดง OuterBoxNumber และ InnerBoxOrder (เริ่มต้นที่ "001" และ "0001")
+ทำการชั่งน้ำหนัก
+ระบบแสดงสถานะ (สีเขียว, สีเหลือง, สีแดง)
+ระบบจัดการตัวนับ (Yellow Count)
+กด "บันทึก" (ถ้าสถานะไม่เป็นสีแดง)
+ระบบ Auto-Increment OuterBoxNumber และ InnerBoxOrder
+สามารถกด "ข้าม" หรือ "ย้อนกลับ" ได้ตามเงื่อนไข
+Leader: Login, ตรวจสอบ/อนุมัติการแก้ไขข้อมูล (กรณีค่าน้ำหนักแดง), ตรวจสอบ/อนุมัติการทำความสะอาด
+QA: Login, ตรวจสอบ/อนุมัติการเปลี่ยนแปลงค่ามาตรฐาน (กรณี Yellow Count >= 3)
+V. Function ต่างๆ ของระบบ:
+
+Authentication: Login, Logout
+Data Management: เพิ่ม/แก้ไข/ลบ Product, เพิ่ม/แก้ไข/ลบ เครื่องชั่ง, บันทึกข้อมูลการชั่ง, แก้ไขข้อมูลการชั่ง, บันทึกข้อมูลการทำความสะอาด
+Approval Workflow: อนุมัติ/Reject การแก้ไขข้อมูล (Leader), อนุมัติ/Reject การเปลี่ยนแปลงค่ามาตรฐาน (QA), ตรวจสอบ/อนุมัติการทำความสะอาด (Leader)
+Reporting: สร้างรายงานต่างๆ
+Notification: ส่งการแจ้งเตือน (QA, Leader)
+Session Management: จดจำข้อมูลการทำงาน (Product, Scale, Date, LotNo)
+VI. UI Modification (หน้าจอการชั่งน้ำหนัก):
+
+แสดง Product, เครื่องชั่ง, LotNo, OuterBoxNumber, และ InnerBoxOrder
+แสดงไฟสถานะ (สีเขียว, สีเหลือง, สีแดง)
+แสดงตัวนับ (Yellow Count)
+ปุ่ม "บันทึก", "ข้าม", "ย้อนกลับ" (Enable/Disable ตามเงื่อนไข)
+VII. Technology Stack:
+
+Backend: Java, Spring Framework
+Frontend: React, JavaScript, HTML, CSS
+Database: SQL Server
+การเปลี่ยนแปลงที่สำคัญ:
+
+InnerBoxOrder เก็บเป็น VARCHAR
+ปรับปรุง Logic การ Auto-Increment และตรวจสอบ InnerBoxOrder
