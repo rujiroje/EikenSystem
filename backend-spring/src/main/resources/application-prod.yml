@@ -1,0 +1,27 @@
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: false
+    properties:
+      hibernate:
+        format_sql: false
+
+app:
+  webauthn:
+    # ต้องตรงกับ IP หรือ hostname ที่ browser ใช้เข้าถึง (ห้ามใส่ http:// หรือ port)
+    # กำหนดผ่าน env var: SERVER_IP=10.1.53.32 java -jar ...
+    rp-id: ${SERVER_IP:10.1.53.32}
+    rp-name: Eikensystem
+    # origin ต้องตรงกับ URL ที่ browser เห็น รวม https://
+    origins: "https://${SERVER_IP:10.1.53.32}"
+
+# รัน production ด้วย: SERVER_IP=10.1.53.32 java -jar app.jar --spring.profiles.active=prod
+# หรือ: ./mvnw spring-boot:run -Dspring-boot.run.profiles=prod -DSERVER_IP=10.1.53.32
+#
+# ⚠️  validate = Hibernate ตรวจสอบ schema ตรงกับ entity แต่ไม่แก้ไขอะไร
+# ถ้า schema ไม่ตรง → application จะ fail to start พร้อม error message ที่ชัดเจน
