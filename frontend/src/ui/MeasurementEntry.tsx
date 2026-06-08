@@ -143,9 +143,14 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
   // ป้องกัน submit ในขณะที่ lockStep1 กำลัง fetch ข้อมูลล่าสุดจาก backend (ป้องกัน race condition)
   const step1LoadingRef = useRef<boolean>(false)
   
+  // Recalc Std mode — เก็บตัวอย่าง 10 กล่อง หลัง QA อนุมัติ RED ด้วย "คำนวณ Std ใหม่"
+  const [recalcStdMode, setRecalcStdMode] = useState<boolean>(false)
+  const [recalcSampleCount, setRecalcSampleCount] = useState<number>(0)
+  const [recalcCurrentAvg, setRecalcCurrentAvg] = useState<number>(0)
+
   // State สำหรับตารางแสดงข้อมูลการชั่ง
   const [measurementHistory, setMeasurementHistory] = useState<Array<{outer: string; inner: string; weight: number; weight1?: number; weight2?: number; std: number; std1?: number; std2?: number; status: string}>>([])
-  
+
   // ใช้ token สดทุกครั้ง (ป้องกันกรณี token เปลี่ยนหลัง re-login)
   const getAuthHeaders = (): Record<string, string> => {
     const t = localStorage.getItem('token')
@@ -256,7 +261,7 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
 
   const loadWorkOrders = async () => {
     try {
-      const r = await fetch(apiUrl('/api/work-orders?status=ACTIVE'), { headers: getAuthHeaders() })
+      const r = await fetch(apiUrl('/api/work-orders?status=ACTIVE&availableForOperator=true'), { headers: getAuthHeaders() })
       if (!r.ok) return
       const data: WorkOrder[] = await r.json()
       setWorkOrders(Array.isArray(data) ? data : [])
@@ -527,7 +532,7 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
 
   // Poll leader approval for RED unlock
   useEffect(() => {
-    if (!leaderApprovalId || status !== 'RED' || !locked) return
+    if (!leaderApprovalId || !locked) return
     const t = setInterval(async () => {
       try {
   const r = await fetch(apiUrl(`/api/approvals/${leaderApprovalId}`), { headers: getAuthHeaders() })
@@ -546,6 +551,7 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
           // ปลดล็อกและเตรียมชั่งซ้ำที่หมายเลขกล่องเดิม
           setOuterBox(redOuter)
           setInnerOrder(redInner)
+          hardLockRef.current = false  // ← reset ref lock ก่อน setLocked เพื่อให้ submit() ทำงานได้
           setLocked(false)
           redAutoSavedRef.current = false
           redApprovalRequestedRef.current = false
@@ -554,7 +560,7 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
           setWeight(0)
           setCapTime('')
           setCapDate('')
-          setInfoMessage(`Leader/QA อนุมัติแล้ว: ปลดล็อกและพร้อมชั่งซ้ำที่กล่อง Outer ${redOuter} Inner ${redInner}`)
+          setInfoMessage(`🟢 Leader/QA อนุมัติแล้ว: ปลดล็อกและพร้อมชั่งซ้ำที่กล่อง Outer ${redOuter} Inner ${redInner}`)
           allowRepeatAfterRedRef.current = true
           if (inputRef.current) inputRef.current.focus()
           setLeaderApprovalId(null)
@@ -598,20 +604,28 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
       lastClassifyRef.current = { key, ts: now }
     }
     // ป้องกันสถานะผิดพลาดตอนโหลดข้อมูลไม่ครบ (เช่น currentStd ยังเป็น 0)
-    if (!selected || !Number.isFinite(w) || w <= 0 || !Number.isFinite(currentStd) || currentStd <= 0) {
-      return
-    }
+    if (!selected || !Number.isFinite(w) || w <= 0) return
     // ล็อค Step 1 อัตโนมัติเมื่อเริ่มชั่งครั้งแรก
-    if (!step1Locked && selected && scaleId && lotNo) {
-      lockStep1()
-    }
+    if (!step1Locked && selected && scaleId && lotNo) lockStep1()
     // ถ้าถูกล็อกรอ QA ห้ามชั่ง
-    if (yellowLockedAwaitQA || waitingForApply) {
+    if (yellowLockedAwaitQA || waitingForApply) return
+
+    // ─── Recalc Std mode: ข้ามการตรวจ Std เดิมทั้งหมด ───────────────────────
+    if (recalcStdMode && recalcSampleCount < 10) {
+      const expectedAvg = recalcSampleCount > 0
+        ? +((recalcCurrentAvg * recalcSampleCount + w) / (recalcSampleCount + 1)).toFixed(3)
+        : +w.toFixed(3)
+      setStatus('RECALC_SAMPLE')
+      setInfoMessage(`⚗️ เก็บตัวอย่าง #${recalcSampleCount + 1}/10 | Std ≈ ${expectedAvg}`)
       return
     }
+    // ─── end recalc check ────────────────────────────────────────────────────
+
+    if (!Number.isFinite(currentStd) || currentStd <= 0) return
     // หลีกเลี่ยงการตัดสินใจ RED/YELLOW ในโหมด DOUBLE ด้วย Local state ปล่อยให้ Backend จัดการเป็นหลัก
     if (selected.weighingMode !== 'DOUBLE' && (w < minVal || w > maxVal)) {
       setStatus('RED')
+      hardLockRef.current = true  // ← ref: ป้องกัน submit() race condition ทันที (ก่อน React re-render)
       setLocked(true) // Lock when out of Min/Max
       // RED event: ไม่ reset yellow streak count (ให้คงค่าเดิมไว้)
       // เพราะ RED เป็นเหตุการณ์ร้ายแรงกว่า YELLOW และไม่ควรตัดความต่อเนื่องของ YELLOW
@@ -696,6 +710,32 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
     const w2 = (w2Param !== undefined ? w2Param : weight2) ?? undefined;
     const saved = allowRepeatAfterRedRef.current ? await reweighMeasurement(w, w1, w2) : await saveMeasurement(w, w1, w2)
     if (saved) {
+      // ─── Recalc Std mode: อัปเดต progress และล็อกเมื่อครบ 10 กล่อง ──────────
+      if (saved.recalcStdMode) {
+        const cnt = saved.recalcSampleCount ?? (recalcSampleCount + 1)
+        const avg = saved.recalcCurrentAvg ?? recalcCurrentAvg
+        setRecalcSampleCount(cnt)
+        setRecalcCurrentAvg(avg)
+        setStatus('')
+        setWeight(0); setWeight1(null); setWeight2(null)
+        if (saved.recalcComplete) {
+          // ครบ 10 กล่อง → ล็อกรอ QA อนุมัติ Std ใหม่
+          hardLockRef.current = true
+          setLocked(true)
+          setWaitingForApply(true)
+          setLockedForInitialStd(true)
+          setRecalcStdMode(false) // จบ recalc mode หลัง lock
+          setInfoMessage(`⚗️ ครบ 10 กล่อง! Std ใหม่ที่เสนอ = ${avg.toFixed(3)} — รอ QA อนุมัติ`)
+          if (saved.stdChangeApprovalId) setQaApprovalId(saved.stdChangeApprovalId)
+        } else {
+          setInfoMessage(`⚗️ เก็บตัวอย่าง ${cnt}/10 | Std ≈ ${avg.toFixed(3)}`)
+          autoAdvanceBox()
+        }
+        submittingRef.current = false
+        return
+      }
+      // ─── end recalc handling ─────────────────────────────────────────────────
+
       // ตรวจสอบจาก Backend ว่าครบจำนวน Inner/Outer และต้องการอนุมัติ Initial Std หรือไม่
       if (saved.requiresInitialStdApproval && !yellowLockedAwaitQA) {
         hardLockRef.current = true   // set synchronously ก่อน setState เพื่อป้องกัน race condition
@@ -783,11 +823,15 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
         return
       }
 
+      // redLocked: true เมื่อชั่งได้ RED → ต้องไม่ reset status เพื่อให้ polling effect เห็น
+      let redLocked = false
+
       if (allowRepeatAfterRedRef.current) {
         // เคส reweigh หลัง Leader อนุมัติ
         const newStatus = saved.measurement?.status || saved.status || ''
         setStatus(newStatus)
         if (newStatus === 'RED') {
+          redLocked = true
           try {
             const mId2 = saved?.measurementId ?? saved?.measurement?.measurementId
             if (mId2) {
@@ -798,7 +842,7 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
             }
           } catch {}
           setLocked(true)
-          setInfoMessage('ยังเป็น RED: สร้างคำขอ Leader ใหม่แล้ว กรุณารออนุมัติ')
+          setInfoMessage('🔴 ยังเป็น RED: สร้างคำขอ Leader ใหม่แล้ว ระบบล็อกรอ Leader อนุมัติ')
         } else if (newStatus === 'GREEN') {
           setInfoMessage('ชั่งซ้ำแล้ว: GREEN เดินต่อกล่องถัดไป')
           allowRepeatAfterRedRef.current = false
@@ -819,6 +863,8 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
         } else if (currStat === 'YELLOW') {
           setInfoMessage('YELLOW: บันทึกแล้ว')
         } else if (currStat === 'RED') {
+          redLocked = true
+          setLocked(true)
           if (!leaderApprovalId && !redApprovalRequestedRef.current) {
             redApprovalRequestedRef.current = true
             try {
@@ -831,7 +877,7 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
               }
             } catch {}
           }
-          setInfoMessage('RED: บันทึกแล้วและผูกกับ Approval')
+          setInfoMessage('🔴 RED: บันทึกแล้ว ระบบล็อกรอ Leader อนุมัติก่อนดำเนินการต่อ')
         }
         allowRepeatAfterRedRef.current = false
         if (currStat !== 'RED') autoAdvanceBox()
@@ -839,7 +885,7 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
       setWeight(0)
       setWeight1(null)
       setWeight2(null)
-      setStatus('')
+      if (!redLocked) setStatus('')   // ← ไม่ reset ถ้า redLocked เพื่อให้ status='RED' คงอยู่ใน UI
       setCapTime('')
       setCapDate('')
       loadMeasurementHistory()
@@ -1061,6 +1107,37 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
         }
         const data = await r.json().catch(() => null)
 
+        // ─── Recalc Std mode restore ─────────────────────────────────────────
+        if (data && data.recalcStdMode) {
+          const cnt = data.recalcSampleCount ?? 0
+          const avg = data.recalcCurrentAvg ?? 0
+          if (cnt < 10) {
+            // ยังเก็บตัวอย่างไม่ครบ → unlock ให้ชั่งต่อ
+            setRecalcStdMode(true)
+            setRecalcSampleCount(cnt)
+            setRecalcCurrentAvg(avg)
+            hardLockRef.current = false
+            setLocked(false)
+            allowRepeatAfterRedRef.current = true // ชั่งซ้ำกล่องเดิมได้
+            if (data.nextOuterBoxNumber) setOuterBox(data.nextOuterBoxNumber)
+            if (data.nextInnerBoxOrder)  setInnerOrder(data.nextInnerBoxOrder)
+            setInfoMessage(`⚗️ โหมดเก็บตัวอย่าง Std ใหม่: ${cnt}/10 กล่อง | Std ≈ ${avg > 0 ? avg.toFixed(3) : '?'}`)
+            return
+          } else {
+            // ครบ 10 แล้ว แต่ QA ยังไม่ได้ apply → lock รอ QA
+            hardLockRef.current = true
+            setLocked(true)
+            setWaitingForApply(true)
+            setLockedForInitialStd(true)
+            setRecalcSampleCount(cnt)
+            setRecalcCurrentAvg(avg)
+            setInfoMessage(`⚗️ ครบ 10 กล่องแล้ว | Std เสนอ = ${avg.toFixed(3)} — รอ QA อนุมัติ`)
+            if (data.pendingApprovalId) setQaApprovalId(data.pendingApprovalId)
+            return
+          }
+        }
+        // ─── end recalc restore ──────────────────────────────────────────────
+
         // Initial Std (ครบจำนวน Inner ต่อ Outer)
         if (data && data.requiresInitialStdApproval && !yellowLocked) {
           hardLockRef.current = true
@@ -1092,9 +1169,10 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
             setOuterBox(data.outerBoxNumber || '001')
             setInnerOrder(data.innerBoxOrder || '0001')
             setStatus('RED')
+            hardLockRef.current = true
             setLocked(true)
             updateYellowCounters(data.consecutiveYellow || 0, data.remainingYellow ?? 5)
-            setInfoMessage('พบ RED กล่องล่าสุด: ระบบล็อกรอ Leader หรือ QA อนุมัติ')
+            setInfoMessage('🔴 พบ RED กล่องล่าสุด: ระบบล็อกรอ Leader หรือ QA อนุมัติ')
             if (!data.approvalId && data.id) {
               try {
                 const rr = await fetch(apiUrl(`/api/approvals/red-for-measurement/${data.id}`), { method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() } })
@@ -1138,8 +1216,25 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
             setInnerOrder(String(Math.max(1, lastInner + 1)).padStart(4, '0'))
             if (!yellowLocked) setInfoMessage('พบข้อมูลก่อนหน้า: เดินหน้าชั่งกล่องถัดไป')
           } else {
+            // RED fallback: กล่องสุดท้ายเป็น RED แต่ไม่มี nextOuter/nextInner — ให้กลับไปที่กล่อง RED นั้น
+            if (data.outerBoxNumber) setOuterBox(data.outerBoxNumber)
             setInnerOrder(innerStr)
-            setInfoMessage('พบ RED กล่องล่าสุด: ระบบจะล็อกและรอ Leader หรือ QA อนุมัติ')
+            setStatus('RED')
+            hardLockRef.current = true
+            setLocked(true)
+            updateYellowCounters(data.consecutiveYellow || 0, data.remainingYellow ?? 5)
+            setInfoMessage('🔴 พบ RED กล่องล่าสุด: ระบบล็อกรอ Leader หรือ QA อนุมัติ')
+            // Restore approval ID
+            if (data.approvalId) {
+              setLeaderApprovalId(data.approvalId)
+            } else if (data.id) {
+              try {
+                const rr = await fetch(apiUrl(`/api/approvals/red-for-measurement/${data.id}`), {
+                  method: 'POST', headers: { 'Content-Type': 'application/json', ...getAuthHeaders() }
+                })
+                if (rr.ok) { const aa = await rr.json().catch(() => null); if (aa?.id) setLeaderApprovalId(aa.id) }
+              } catch {}
+            }
           }
         } else {
           setInnerOrder('0001')
@@ -1482,6 +1577,26 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
   // ── Reusable: Alert section ───────────────────────────────────────────────
   const alertSection = (
     <Space direction="vertical" size={6} style={{ width: '100%' }}>
+      {recalcStdMode && recalcSampleCount < 10 && (
+        <Alert
+          type="info"
+          showIcon
+          style={{ background: '#f9f0ff', borderColor: '#b37feb' }}
+          message={
+            <span style={{ color: '#531dab', fontWeight: 600 }}>
+              ⚗️ โหมดเก็บตัวอย่าง Std ใหม่
+            </span>
+          }
+          description={
+            <span>
+              เก็บแล้ว <b>{recalcSampleCount}/10</b> กล่อง
+              {recalcCurrentAvg > 0 && <> | Std ≈ <b>{recalcCurrentAvg.toFixed(3)}</b></>}
+              <br />
+              <span style={{ fontSize: 11, color: '#722ed1' }}>ไม่มีการตรวจ RED/YELLOW ระหว่างโหมดนี้ — ชั่งปกติได้เลย</span>
+            </span>
+          }
+        />
+      )}
       {infoMessage && <Alert type="success" message={infoMessage} showIcon />}
       {errorMessage && <Alert type="error" message={errorMessage} showIcon />}
       {locked && status === 'RED' && (
@@ -1720,6 +1835,9 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
                 currentOuter={outerBox}
                 currentInner={innerOrder}
                 innerBoxQuantity={selected.innerBoxQuantity || 10}
+                weighingMode={selected.weighingMode}
+                weightPerPiece={selected.weightPerPiece}
+                tolerance={selected.tolerance}
               />
             ) : (
               <Typography.Text type="secondary">ยังไม่มีข้อมูลการชั่ง</Typography.Text>
@@ -2170,12 +2288,37 @@ function parseScaleCapture(raw: string): { w: string; t: string; d: string } | n
   return { w, t, d }
 }
 
+// คำนวณสถานะจากน้ำหนัก + std ของ measurement ใน history grid
+// — แก้ไขกรณี DB status ผิดพลาดจาก backend formula เคยมี +1.0 offset ทำให้เก็บเป็น YELLOW แทน RED
+function getDisplayStatus(
+  item: { weight: number; std: number; status: string },
+  weighingMode?: string,
+  weightPerPiece?: number,
+  tolerance?: number
+): string {
+  if (weighingMode !== 'DOUBLE' && item.std > 0 && (weightPerPiece ?? 0) > 0) {
+    const wpp = weightPerPiece!
+    const min = item.std - wpp / 2
+    const max = item.std + wpp / 2
+    const tol = (tolerance ?? 0) > 0 ? tolerance! : wpp / 4
+    const dmin = item.std - tol
+    const dmax = item.std + tol
+    if (item.weight < min || item.weight > max) return 'RED'
+    if (item.weight < dmin || item.weight > dmax) return 'YELLOW'
+    return 'GREEN'
+  }
+  return item.status // DOUBLE mode หรือ ไม่มี std → ใช้ค่าจาก DB
+}
+
 // Component สำหรับแสดงตารางประวัติการชั่ง
-function MeasurementHistoryTable({ data, currentOuter, currentInner, innerBoxQuantity }: { 
+function MeasurementHistoryTable({ data, currentOuter, currentInner, innerBoxQuantity, weighingMode, weightPerPiece, tolerance }: {
   data: Array<{outer: string; inner: string; weight: number; weight1?: number; weight2?: number; std: number; std1?: number; std2?: number; status: string}>;
   currentOuter: string;
   currentInner: string;
   innerBoxQuantity: number;
+  weighingMode?: string;
+  weightPerPiece?: number;
+  tolerance?: number;
 }) {
   // จัดกลุ่มข้อมูลตาม Outer
   const groupedByOuter: Record<string, Array<{inner: string; weight: number; weight1?: number; weight2?: number; std: number; std1?: number; std2?: number; status: string}>> = {}
@@ -2270,16 +2413,18 @@ function MeasurementHistoryTable({ data, currentOuter, currentInner, innerBoxQua
                               
                               const item = items[slotIndex]
                               const isCurrent = (outer === currentOuter && item && item.inner === currentInner)
-                              
+                              const ds = item ? getDisplayStatus(item, weighingMode, weightPerPiece, tolerance) : ''
+
                               return (
-                                <td key={`col-${rowIdx}-${colIdx}`} style={{ 
-                                  padding: '4px 8px', 
-                                  border: '1px solid #d9d9d9', 
+                                <td key={`col-${rowIdx}-${colIdx}`} style={{
+                                  padding: '4px 8px',
+                                  border: '1px solid #d9d9d9',
                                   textAlign: 'center',
-                                  backgroundColor: item ? (item.status === 'GREEN' ? '#d9f7be' : item.status === 'YELLOW' ? '#fff7cd' : item.status === 'RED' ? '#ffccc7' : '#fff') : '#fff',
-                                  fontWeight: isCurrent ? 700 : 400,
+                                  backgroundColor: item ? (ds === 'GREEN' ? '#d9f7be' : ds === 'YELLOW' ? '#fff7cd' : ds === 'RED' ? '#ff4d4f' : '#fff') : '#fff',
+                                  color: ds === 'RED' ? '#fff' : 'inherit',
+                                  fontWeight: isCurrent ? 700 : (ds === 'RED' ? 700 : 400),
                                   borderWidth: isCurrent ? 2 : 1,
-                                  borderColor: isCurrent ? '#1677ff' : '#d9d9d9',
+                                  borderColor: isCurrent ? '#1677ff' : (ds === 'RED' ? '#cf1322' : '#d9d9d9'),
                                   minWidth: 60
                                 }}>
                                   {item ? item.inner : '-'}
@@ -2302,16 +2447,18 @@ function MeasurementHistoryTable({ data, currentOuter, currentInner, innerBoxQua
                               if (slotIndex >= displayCapacity) return <td key={`col-${rowIdx}-${colIdx}`} style={{ border: '1px solid #d9d9d9', backgroundColor: '#f0f0f0' }}></td>
                               
                               const item = items[slotIndex]
-                              
+                              const dsW = item ? getDisplayStatus(item, weighingMode, weightPerPiece, tolerance) : ''
+
                               return (
-                                <td key={`col-${rowIdx}-${colIdx}`} style={{ 
-                                  padding: '4px 8px', 
-                                  border: '1px solid #d9d9d9', 
+                                <td key={`col-${rowIdx}-${colIdx}`} style={{
+                                  padding: '4px 8px',
+                                  border: `1px solid ${dsW === 'RED' ? '#cf1322' : '#d9d9d9'}`,
                                   textAlign: 'center',
-                                  backgroundColor: '#f9f9f9',
+                                  backgroundColor: item ? (dsW === 'GREEN' ? '#d9f7be' : dsW === 'YELLOW' ? '#fff7cd' : dsW === 'RED' ? '#ff4d4f' : '#f9f9f9') : '#f9f9f9',
                                   fontVariantNumeric: 'tabular-nums',
+                                  fontWeight: dsW === 'RED' ? 700 : 400,
                                   minWidth: 60,
-                                  color: item ? 'inherit' : '#ccc'
+                                  color: dsW === 'RED' ? '#fff' : (item ? 'inherit' : '#ccc')
                                 }}>
                                   {item ? item.weight.toFixed(3) : '-'}
                                 </td>
@@ -2326,8 +2473,9 @@ function MeasurementHistoryTable({ data, currentOuter, currentInner, innerBoxQua
                                   const slotIndex = rowIdx * 10 + colIdx
                                   if (slotIndex >= displayCapacity) return <td key={`col-${rowIdx}-${colIdx}`} style={{ border: '1px solid #d9d9d9', backgroundColor: '#f0f0f0' }}></td>
                                   const item = items[slotIndex]
+                                  const dsW1 = item ? getDisplayStatus(item, weighingMode, weightPerPiece, tolerance) : ''
                                   return (
-                                    <td key={`col-${rowIdx}-${colIdx}`} style={{ padding: '4px 8px', border: '1px solid #d9d9d9', textAlign: 'center', backgroundColor: '#fff', fontSize: 11, color: '#888' }}>{item && item.weight1 != null ? item.weight1.toFixed(3) : '-'}</td>
+                                    <td key={`col-${rowIdx}-${colIdx}`} style={{ padding: '4px 8px', border: `1px solid ${dsW1 === 'RED' ? '#cf1322' : '#d9d9d9'}`, textAlign: 'center', backgroundColor: dsW1 === 'RED' ? '#ff7875' : '#fff', fontSize: 11, color: dsW1 === 'RED' ? '#fff' : '#888', fontWeight: dsW1 === 'RED' ? 700 : 400 }}>{item && item.weight1 != null ? item.weight1.toFixed(3) : '-'}</td>
                                   )
                                 })}
                               </tr>
@@ -2337,8 +2485,9 @@ function MeasurementHistoryTable({ data, currentOuter, currentInner, innerBoxQua
                                   const slotIndex = rowIdx * 10 + colIdx
                                   if (slotIndex >= displayCapacity) return <td key={`col-${rowIdx}-${colIdx}`} style={{ border: '1px solid #d9d9d9', backgroundColor: '#f0f0f0' }}></td>
                                   const item = items[slotIndex]
+                                  const dsW2 = item ? getDisplayStatus(item, weighingMode, weightPerPiece, tolerance) : ''
                                   return (
-                                    <td key={`col-${rowIdx}-${colIdx}`} style={{ padding: '4px 8px', border: '1px solid #d9d9d9', textAlign: 'center', backgroundColor: '#fff', fontSize: 11, color: '#888' }}>{item && item.weight2 != null ? item.weight2.toFixed(3) : '-'}</td>
+                                    <td key={`col-${rowIdx}-${colIdx}`} style={{ padding: '4px 8px', border: `1px solid ${dsW2 === 'RED' ? '#cf1322' : '#d9d9d9'}`, textAlign: 'center', backgroundColor: dsW2 === 'RED' ? '#ff7875' : '#fff', fontSize: 11, color: dsW2 === 'RED' ? '#fff' : '#888', fontWeight: dsW2 === 'RED' ? 700 : 400 }}>{item && item.weight2 != null ? item.weight2.toFixed(3) : '-'}</td>
                                   )
                                 })}
                               </tr>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
-import { Card, Table, Tag, Button, Space, Typography, Alert, Switch, Select, Modal, Input as AntInput } from 'antd'
+import { Card, Table, Tag, Button, Space, Typography, Alert, Switch, Select, Modal, Input as AntInput, Tooltip } from 'antd'
 import { apiUrl } from '../api'
 
 type MachineStatus = {
@@ -66,6 +66,7 @@ export function QADashboard({ token, username }: { token: string; username: stri
   const [qaScaleFocused, setQaScaleFocused] = useState(false)
   const [qaScaleStep, setQaScaleStep] = useState(0) // DOUBLE: 0=W1 1=W2
   const qaScaleRef = useRef<any>(null)
+  const [woList, setWoList] = useState<any[]>([])
 
   const fetchStatus = useCallback(async () => {
     setLoading(true)
@@ -93,6 +94,13 @@ export function QADashboard({ token, username }: { token: string; username: stri
     const t = setInterval(fetchStatus, refreshSec * 1000)
     return () => clearInterval(t)
   }, [autoRefresh, refreshSec, fetchStatus])
+
+  useEffect(() => {
+    fetch(apiUrl('/api/work-orders'), { headers })
+      .then(r => r.ok ? r.json() : [])
+      .then(setWoList)
+      .catch(() => {})
+  }, [headers])
 
   const reloadQaLists = useCallback(async () => {
     try {
@@ -298,18 +306,70 @@ export function QADashboard({ token, username }: { token: string; username: stri
   const columns = [
     {
       title: 'Machine', key: 'machine',
-      render: (_: any, r: MachineStatus) => (
-        <span>
-          <b>{r.machineId}</b>{r.machineName && r.machineName !== r.machineId ? ` - ${r.machineName}` : ''}
-          {!r.active && <Tag color="default" style={{ marginLeft: 6, fontSize: 11 }}>ไม่มีการทำงาน</Tag>}
-        </span>
-      )
+      render: (_: any, r: MachineStatus) => {
+        const todayStr = new Date().toISOString().substring(0, 10)
+        const scheduledWos = woList.filter((wo: any) =>
+          wo.status === 'ACTIVE' &&
+          wo.machine?.machineId === r.machineId &&
+          (wo.startDate == null || wo.startDate <= todayStr) &&
+          (wo.endDate == null || wo.endDate >= todayStr)
+        )
+        const notStarted = scheduledWos.length > 0 && !r.active
+        return (
+          <span>
+            <b>{r.machineId}</b>{r.machineName && r.machineName !== r.machineId ? ` - ${r.machineName}` : ''}
+            {notStarted
+              ? <Tag color="warning" style={{ marginLeft: 6, fontSize: 11 }}>⚠ มี WO แต่ยังไม่เริ่ม</Tag>
+              : !r.active && <Tag color="default" style={{ marginLeft: 6, fontSize: 11 }}>ไม่มีการทำงาน</Tag>
+            }
+          </span>
+        )
+      }
     },
     {
       title: 'Scale', key: 'scale',
       render: (_: any, r: MachineStatus) => r.scaleId
         ? <Tag>{r.scaleId}{r.scaleName ? ` - ${r.scaleName}` : ''}</Tag>
         : <span style={{ color: '#bbb' }}>—</span>
+    },
+    {
+      title: 'WO วันนี้', key: 'scheduledWo',
+      render: (_: any, r: MachineStatus) => {
+        const todayStr = new Date().toISOString().substring(0, 10)
+        const scheduledWos = woList.filter((wo: any) =>
+          wo.status === 'ACTIVE' &&
+          wo.machine?.machineId === r.machineId &&
+          (wo.startDate == null || wo.startDate <= todayStr) &&
+          (wo.endDate == null || wo.endDate >= todayStr)
+        )
+        if (scheduledWos.length === 0) return <span style={{ color: '#bbb' }}>—</span>
+        return (
+          <Space direction="vertical" size={2}>
+            {scheduledWos.map((wo: any) => {
+              const isRunning = r.active && (r.workOrderId === wo.workOrderId || r.lastLotNo === wo.lotNo)
+              return (
+                <Tooltip
+                  key={wo.workOrderId}
+                  title={
+                    <span>
+                      Product: {wo.product?.productCode} — {wo.product?.productName}<br />
+                      Scale: {wo.scale?.scaleId}<br />
+                      วันผลิต: {wo.startDate ?? '∞'} → {wo.endDate ?? '∞'}<br />
+                      สร้างโดย: {wo.createdBy}<br />
+                      {wo.operatorNames && <>Operator: {wo.operatorNames}</>}
+                    </span>
+                  }
+                >
+                  <Tag color={isRunning ? 'green' : 'orange'} style={{ cursor: 'default', fontSize: 11 }}>
+                    {isRunning ? '▶ ' : '⏸ '}WO #{wo.workOrderId} · {wo.lotNo}
+                    <span style={{ marginLeft: 4, opacity: 0.8 }}>[{wo.product?.productCode}]</span>
+                  </Tag>
+                </Tooltip>
+              )
+            })}
+          </Space>
+        )
+      }
     },
     {
       title: 'Product / Lot', key: 'product',
@@ -364,9 +424,18 @@ export function QADashboard({ token, username }: { token: string; username: stri
     {
       title: 'ต้องการดำเนินการ', key: 'needsAction',
       render: (_: any, r: MachineStatus) => {
-        if (!r.active && !r.needsQa && !r.needsLeader) return <span style={{ color: '#bbb', fontSize: 11 }}>—</span>
-        if (r.needsQa) return <Tag color="red" style={{ fontWeight: 600 }}>ต้องการดำเนินการ</Tag>
+        const todayStr = new Date().toISOString().substring(0, 10)
+        const scheduledWos = woList.filter((wo: any) =>
+          wo.status === 'ACTIVE' &&
+          wo.machine?.machineId === r.machineId &&
+          (wo.startDate == null || wo.startDate <= todayStr) &&
+          (wo.endDate == null || wo.endDate >= todayStr)
+        )
+        const notStarted = scheduledWos.length > 0 && !r.active
+        if (r.needsQa)     return <Tag color="red"    style={{ fontWeight: 600 }}>ต้องการดำเนินการ</Tag>
         if (r.needsLeader) return <Tag color="orange" style={{ fontWeight: 600 }}>รอ LD อนุมัติ</Tag>
+        if (notStarted)    return <Tag color="warning" style={{ fontWeight: 600 }}>⚠ ควรเริ่มทำงาน</Tag>
+        if (!r.active)     return <span style={{ color: '#bbb', fontSize: 11 }}>—</span>
         return <Tag color="green">ปกติ</Tag>
       }
     }
@@ -925,26 +994,42 @@ export function QADashboard({ token, username }: { token: string; username: stri
                       onClick={async ()=>{
                         const noteInput = document.getElementById(`red-note-${it.id}`) as HTMLInputElement
                         const note = noteInput?.value?.trim() || ''
-                        if (!note) {
-                          setMsg('❌ กรุณากรอกเหตุผลในการอนุมัติ RED event')
-                          return
-                        }
+                        if (!note) { setMsg('❌ กรุณากรอกเหตุผลในการอนุมัติ RED event'); return }
                         const r = await fetch(apiUrl(`/api/approvals/${it.id}/approve-with-note`), {
-                          method:'POST',
-                          headers: { ...headers, 'Content-Type':'application/json' },
+                          method:'POST', headers: { ...headers, 'Content-Type':'application/json' },
                           body: JSON.stringify({ actionBy: username, note })
                         })
                         if (r.ok) {
                           setMsg('✅ อนุมัติ RED event สำเร็จ — Operator สามารถชั่งซ้ำได้แล้ว')
-                          reloadQaLists()
-                          fetchStatus()
-                        } else {
-                          setMsg('❌ อนุมัติ RED ไม่สำเร็จ')
-                        }
+                          reloadQaLists(); fetchStatus()
+                        } else { setMsg('❌ อนุมัติ RED ไม่สำเร็จ') }
                       }}
                     >
                       อนุมัติ (QA)
                     </Button>
+                    <Tooltip title="อนุมัติ RED + เริ่มเก็บตัวอย่าง Std ใหม่ 10 กล่อง&#13;&#10;• ชั่งซ้ำกล่องเดิมเป็น Sample #1&#13;&#10;• ชั่งต่อ 9 กล่อง = ครบ 10&#13;&#10;• Std ใหม่ = ค่าเฉลี่ยวิ่งของทั้ง 10 กล่อง">
+                      <Button
+                        style={{ background:'#722ed1', borderColor:'#722ed1', color:'#fff' }}
+                        onClick={async ()=>{
+                          const noteInput = document.getElementById(`red-note-${it.id}`) as HTMLInputElement
+                          const note = noteInput?.value?.trim() || ''
+                          if (!note) { setMsg('❌ กรุณากรอกเหตุผลก่อนกด "คำนวณ Std ใหม่"'); return }
+                          const r = await fetch(apiUrl(`/api/approvals/${it.id}/approve-recalc-std`), {
+                            method:'POST', headers: { ...headers, 'Content-Type':'application/json' },
+                            body: JSON.stringify({ actionBy: username, note })
+                          })
+                          if (r.ok) {
+                            setMsg('⚗️ เริ่มโหมดเก็บตัวอย่าง Std ใหม่ — Operator ชั่งซ้ำกล่องเดิมได้เลย (1/10)')
+                            reloadQaLists(); fetchStatus()
+                          } else {
+                            const txt = await r.text()
+                            setMsg(`❌ ไม่สำเร็จ: ${txt}`)
+                          }
+                        }}
+                      >
+                        ⚗️ คำนวณ Std ใหม่
+                      </Button>
+                    </Tooltip>
                   </div>
                 </div>
               )

@@ -493,18 +493,73 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
           columns={[
             {
               title: 'Machine', key: 'machine',
-              render: (_: any, r: MachineStatus) => (
-                <span>
-                  <b>{r.machineId}</b>{r.machineName && r.machineName !== r.machineId ? ` - ${r.machineName}` : ''}
-                  {!r.active && <Tag color="default" style={{ marginLeft: 6, fontSize: 11 }}>ไม่มีการทำงาน</Tag>}
-                </span>
-              )
+              render: (_: any, r: MachineStatus) => {
+                const todayStr = new Date().toISOString().substring(0, 10)
+                const scheduledWos = ldWoList.filter((wo: any) =>
+                  wo.status === 'ACTIVE' &&
+                  wo.machine?.machineId === r.machineId &&
+                  (wo.startDate == null || wo.startDate <= todayStr) &&
+                  (wo.endDate == null || wo.endDate >= todayStr)
+                )
+                const notStarted = scheduledWos.length > 0 && !r.active
+                return (
+                  <span>
+                    <b>{r.machineId}</b>{r.machineName && r.machineName !== r.machineId ? ` - ${r.machineName}` : ''}
+                    {notStarted
+                      ? <Tag color="warning" style={{ marginLeft: 6, fontSize: 11 }}>⚠ มี WO แต่ยังไม่เริ่ม</Tag>
+                      : !r.active && <Tag color="default" style={{ marginLeft: 6, fontSize: 11 }}>ไม่มีการทำงาน</Tag>
+                    }
+                  </span>
+                )
+              }
             },
             {
               title: 'Scale', key: 'scale',
               render: (_: any, r: MachineStatus) => r.scaleId
                 ? <Tag>{r.scaleId}{r.scaleName ? ` - ${r.scaleName}` : ''}</Tag>
                 : <span style={{ color: '#bbb' }}>—</span>
+            },
+            {
+              title: 'WO วันนี้', key: 'scheduledWo',
+              render: (_: any, r: MachineStatus) => {
+                const todayStr = new Date().toISOString().substring(0, 10)
+                const scheduledWos = ldWoList.filter((wo: any) =>
+                  wo.status === 'ACTIVE' &&
+                  wo.machine?.machineId === r.machineId &&
+                  (wo.startDate == null || wo.startDate <= todayStr) &&
+                  (wo.endDate == null || wo.endDate >= todayStr)
+                )
+                if (scheduledWos.length === 0) return <span style={{ color: '#bbb' }}>—</span>
+                return (
+                  <Space direction="vertical" size={2}>
+                    {scheduledWos.map((wo: any) => {
+                      const isRunning = r.active && (r.workOrderId === wo.workOrderId || r.lastLotNo === wo.lotNo)
+                      return (
+                        <Tooltip
+                          key={wo.workOrderId}
+                          title={
+                            <span>
+                              Product: {wo.product?.productCode} — {wo.product?.productName}<br />
+                              Scale: {wo.scale?.scaleId}<br />
+                              วันผลิต: {wo.startDate ?? '∞'} → {wo.endDate ?? '∞'}<br />
+                              สร้างโดย: {wo.createdBy}<br />
+                              {wo.operatorNames && <>Operator: {wo.operatorNames}</>}
+                            </span>
+                          }
+                        >
+                          <Tag
+                            color={isRunning ? 'green' : 'orange'}
+                            style={{ cursor: 'default', fontSize: 11 }}
+                          >
+                            {isRunning ? '▶ ' : '⏸ '}WO #{wo.workOrderId} · {wo.lotNo}
+                            <span style={{ marginLeft: 4, opacity: 0.8 }}>[{wo.product?.productCode}]</span>
+                          </Tag>
+                        </Tooltip>
+                      )
+                    })}
+                  </Space>
+                )
+              }
             },
             {
               title: 'Product / Lot', key: 'product',
@@ -559,9 +614,18 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
             {
               title: 'ต้องการดำเนินการ', key: 'needsAction',
               render: (_: any, r: MachineStatus) => {
-                if (!r.active && !r.needsLeader && !r.needsQa) return <span style={{ color: '#bbb', fontSize: 11 }}>—</span>
+                const todayStr = new Date().toISOString().substring(0, 10)
+                const scheduledWos = ldWoList.filter((wo: any) =>
+                  wo.status === 'ACTIVE' &&
+                  wo.machine?.machineId === r.machineId &&
+                  (wo.startDate == null || wo.startDate <= todayStr) &&
+                  (wo.endDate == null || wo.endDate >= todayStr)
+                )
+                const notStarted = scheduledWos.length > 0 && !r.active
                 if (r.needsLeader) return <Tag color="red" style={{ fontWeight: 600 }}>ต้องการดำเนินการ</Tag>
-                if (r.needsQa) return <Tag color="orange" style={{ fontWeight: 600 }}>รอ QA ดำเนินการ</Tag>
+                if (r.needsQa)     return <Tag color="orange" style={{ fontWeight: 600 }}>รอ QA ดำเนินการ</Tag>
+                if (notStarted)    return <Tag color="warning" style={{ fontWeight: 600 }}>⚠ ควรเริ่มทำงาน</Tag>
+                if (!r.active)     return <span style={{ color: '#bbb', fontSize: 11 }}>—</span>
                 return <Tag color="green">ปกติ</Tag>
               }
             }

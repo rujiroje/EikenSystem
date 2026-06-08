@@ -3,7 +3,7 @@ import {
   Button, Card, DatePicker, Form, Input, InputNumber, Modal, Select,
   Space, Table, Tag, Typography, message, Popconfirm, Tooltip, Switch, Tabs
 } from 'antd'
-import { PlusOutlined, EditOutlined, CheckCircleOutlined, SyncOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, CheckCircleOutlined, SyncOutlined, DeleteOutlined } from '@ant-design/icons'
 import { apiUrl } from '../api'
 import dayjs from 'dayjs'
 
@@ -54,6 +54,8 @@ type WorkOrder = {
   sessionStartedAt?: string
   closedAt?: string
   closedBy?: string
+  reworkSourceWo?: { workOrderId: number; lotNo: string; product: Product }
+  reworkReason?: string
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -88,6 +90,10 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
   const [form] = Form.useForm()
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
   const [activeTab, setActiveTab] = useState('wo')
+  const [isRework, setIsRework] = useState(false)
+  const [busyMachines, setBusyMachines] = useState<Map<string, { conflictWoId: number; conflictLotNo: string; conflictStart?: string; conflictEnd?: string }>>(new Map())
+  const [busyScales, setBusyScales]     = useState<Map<string, { conflictWoId: number; conflictLotNo: string; conflictStart?: string; conflictEnd?: string }>>(new Map())
+  const [availabilityLoading, setAvailabilityLoading] = useState(false)
 
   const authHeaders = { Authorization: `Bearer ${token}` }
 
@@ -125,11 +131,42 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
   useEffect(() => { loadMasterData() }, [])
   useEffect(() => { loadWorkOrders() }, [filterStatus])
 
+  // ─── Availability check ────────────────────────────────────────────────────
+
+  const checkAvailability = async (startDate: string | undefined, endDate: string | undefined) => {
+    if (!startDate || !endDate) {
+      setBusyMachines(new Map())
+      setBusyScales(new Map())
+      return
+    }
+    setAvailabilityLoading(true)
+    try {
+      const excludeParam = editingWO ? `&excludeWoId=${editingWO.workOrderId}` : ''
+      const r = await fetch(
+        apiUrl(`/api/work-orders/availability?startDate=${startDate}&endDate=${endDate}${excludeParam}`),
+        { headers: authHeaders }
+      )
+      if (!r.ok) return
+      const data = await r.json()
+      const mMap = new Map<string, { conflictWoId: number; conflictLotNo: string; conflictStart?: string; conflictEnd?: string }>()
+      const sMap = new Map<string, { conflictWoId: number; conflictLotNo: string; conflictStart?: string; conflictEnd?: string }>()
+      for (const m of data.busyMachines ?? []) mMap.set(m.machineId, m)
+      for (const s of data.busyScales   ?? []) sMap.set(s.scaleId,   s)
+      setBusyMachines(mMap)
+      setBusyScales(sMap)
+    } catch {} finally {
+      setAvailabilityLoading(false)
+    }
+  }
+
   // ─── WO form ──────────────────────────────────────────────────────────────
 
   const openCreateModal = () => {
     setEditingWO(null)
     setSelectedProduct(null)
+    setIsRework(false)
+    setBusyMachines(new Map())
+    setBusyScales(new Map())
     form.resetFields()
     setModalOpen(true)
   }
@@ -138,6 +175,7 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
     setEditingWO(wo)
     const prod = products.find(p => p.productCode === wo.product?.productCode) ?? null
     setSelectedProduct(prod)
+    setIsRework(!!wo.reworkSourceWo)
     form.setFieldsValue({
       productCode: wo.product?.productCode,
       scaleId: wo.scale?.scaleId,
@@ -148,7 +186,12 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
       customStd: wo.customStd,
       customStd1: wo.customStd1,
       customStd2: wo.customStd2,
+      reworkSourceWoId: wo.reworkSourceWo?.workOrderId ?? undefined,
+      reworkReason: wo.reworkReason ?? undefined,
     })
+    // ตรวจ availability ตามวันที่ปัจจุบันของ WO (exclude ตัวเอง)
+    if (wo.startDate && wo.endDate) checkAvailability(wo.startDate, wo.endDate)
+    else { setBusyMachines(new Map()); setBusyScales(new Map()) }
     setModalOpen(true)
   }
 
@@ -194,6 +237,20 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
     }
   }
 
+  const deleteWO = async (wo: WorkOrder) => {
+    const r = await fetch(apiUrl(`/api/work-orders/${wo.workOrderId}`), {
+      method: 'DELETE',
+      headers: authHeaders,
+    })
+    if (r.ok) {
+      message.success(`ลบ WO #${wo.workOrderId} (Lot: ${wo.lotNo}) สำเร็จ`)
+      loadWorkOrders()
+    } else {
+      const txt = await r.text()
+      message.error(txt || 'ลบ WO ไม่สำเร็จ')
+    }
+  }
+
   const isDouble = selectedProduct?.weighingMode === 'DOUBLE'
   const activeMachines = machines.filter(m => m.isActive !== false)
 
@@ -229,6 +286,26 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
       },
     },
     { title: 'Lot No.', dataIndex: 'lotNo' },
+    {
+      title: 'Rework',
+      width: 110,
+      render: (_: unknown, wo: WorkOrder) => {
+        if (!wo.reworkSourceWo) return <span style={{ color: '#ddd' }}>—</span>
+        return (
+          <Tooltip title={
+            <span>
+              ต้นฉบับ: WO #{wo.reworkSourceWo.workOrderId}<br />
+              Lot: {wo.reworkSourceWo.lotNo}<br />
+              {wo.reworkReason && <>เหตุผล: {wo.reworkReason}</>}
+            </span>
+          }>
+            <Tag color="orange" style={{ cursor: 'default' }}>
+              🔄 #{wo.reworkSourceWo.workOrderId}
+            </Tag>
+          </Tooltip>
+        )
+      },
+    },
     {
       title: 'วันผลิต',
       render: (_: unknown, wo: WorkOrder) =>
@@ -327,6 +404,23 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
               <Button size="small" icon={<CheckCircleOutlined />}>Re-Activate</Button>
             </Popconfirm>
           )}
+          <Popconfirm
+            title={`ลบ WO #${wo.workOrderId}?`}
+            description={
+              <span>
+                Lot: <b>{wo.lotNo}</b> จะถูกลบถาวร<br />
+                <span style={{ color: '#ff4d4f' }}>ลบได้เฉพาะ WO ที่ยังไม่มีบันทึกการผลิต</span>
+              </span>
+            }
+            onConfirm={() => deleteWO(wo)}
+            okText="ลบถาวร"
+            cancelText="ยกเลิก"
+            okButtonProps={{ danger: true }}
+          >
+            <Tooltip title="ลบ WO (เฉพาะที่ยังไม่มีการผลิต)">
+              <Button size="small" danger icon={<DeleteOutlined />} />
+            </Tooltip>
+          </Popconfirm>
         </Space>
       ),
     },
@@ -391,11 +485,83 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
         destroyOnClose
       >
         <Form form={form} layout="vertical" size="middle">
-          <Form.Item name="productCode" label="Product" rules={[{ required: true, message: 'กรุณาเลือก Product' }]}>
+
+          {/* ─── ขั้นที่ 1: Rework หรือ WO ปกติ? ─── */}
+          <Card size="small" style={{ marginBottom: 12, background: isRework ? '#fff7e6' : '#fafafa', borderColor: isRework ? '#ffa940' : '#d9d9d9' }}>
+            <Space align="center" style={{ marginBottom: isRework ? 12 : 0 }}>
+              <Switch
+                checked={isRework}
+                onChange={(v) => {
+                  setIsRework(v)
+                  if (!v) {
+                    form.setFieldsValue({ reworkSourceWoId: undefined, reworkReason: undefined })
+                    // unlock product — ล้างค่าที่ auto-fill มาจาก source WO
+                    setSelectedProduct(null)
+                    form.setFieldsValue({ productCode: undefined, customStd: undefined, customStd1: undefined, customStd2: undefined })
+                  }
+                }}
+                checkedChildren="🔄 Rework"
+                unCheckedChildren="WO ปกติ"
+              />
+              <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                {isRework ? 'นำ WO เก่ามาทำซ้ำ — Product จะถูกกำหนดจาก WO ต้นฉบับ' : 'WO ผลิตปกติ'}
+              </Typography.Text>
+            </Space>
+
+            {isRework && (
+              <>
+                <Form.Item
+                  name="reworkSourceWoId"
+                  label="WO ต้นฉบับ"
+                  style={{ marginBottom: 8 }}
+                  rules={[{ required: true, message: 'กรุณาเลือก WO ต้นฉบับ' }]}
+                >
+                  <Select
+                    showSearch
+                    placeholder="ค้นหา WO ต้นฉบับ (Lot No. / WO# / Product)"
+                    optionFilterProp="label"
+                    onChange={(woId: number) => {
+                      const src = workOrders.find(w => w.workOrderId === woId)
+                      if (src?.product) {
+                        const p = products.find(x => x.productCode === src.product.productCode) ?? null
+                        setSelectedProduct(p)
+                        form.setFieldsValue({
+                          productCode: src.product.productCode,
+                          customStd: undefined,
+                          customStd1: undefined,
+                          customStd2: undefined,
+                        })
+                      }
+                    }}
+                    options={workOrders
+                      .filter(w => !editingWO || w.workOrderId !== editingWO.workOrderId)
+                      .map(w => ({
+                        value: w.workOrderId,
+                        label: `WO #${w.workOrderId} — Lot: ${w.lotNo} [${w.product?.productCode}] (${w.status})`,
+                      }))}
+                  />
+                </Form.Item>
+                <Form.Item name="reworkReason" label="เหตุผลที่ Rework" style={{ marginBottom: 0 }}>
+                  <Input.TextArea rows={2} placeholder="เช่น ชั่งน้ำหนักไม่ผ่าน / ผลิตใหม่หลัง sorting" />
+                </Form.Item>
+              </>
+            )}
+          </Card>
+
+          {/* ─── ขั้นที่ 2: Product (auto-fill + lock เมื่อ Rework) ─── */}
+          <Form.Item
+            name="productCode"
+            label="Product"
+            rules={[{ required: true, message: 'กรุณาเลือก Product' }]}
+            extra={isRework && form.getFieldValue('reworkSourceWoId')
+              ? <span style={{ color: '#fa8c16', fontSize: 12 }}>🔒 กำหนดจาก WO ต้นฉบับ — ปลดล็อกโดยปิด Rework</span>
+              : undefined}
+          >
             <Select
               showSearch
               placeholder="เลือก Product"
               optionFilterProp="children"
+              disabled={isRework && !!form.getFieldValue('reworkSourceWoId')}
               onChange={(code: string) => {
                 const p = products.find(x => x.productCode === code) ?? null
                 setSelectedProduct(p)
@@ -410,41 +576,92 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
             </Select>
           </Form.Item>
 
+          {/* ─── ขั้นที่ 3: Lot No. ─── */}
+          <Form.Item name="lotNo" label="Lot No." rules={[{ required: true, message: 'กรุณากรอก Lot No.' }]}>
+            <Input placeholder="เช่น LOT-2025-001" />
+          </Form.Item>
+
+          {/* ─── ขั้นที่ 4: เลือกวันก่อน → ระบบตรวจ Scale + M/C ว่าง ─── */}
           <Space style={{ width: '100%' }}>
-            <Form.Item name="scaleId" label="เครื่องชั่ง (Scale)" style={{ flex: 1 }} rules={[{ required: true, message: 'กรุณาเลือก Scale' }]}>
+            <Form.Item name="startDate" label="วันเริ่มผลิต" style={{ flex: 1 }}>
+              <DatePicker
+                style={{ width: '100%' }}
+                format="YYYY-MM-DD"
+                onChange={(val) => {
+                  const end = form.getFieldValue('endDate')
+                  checkAvailability(
+                    val ? val.format('YYYY-MM-DD') : undefined,
+                    end ? end.format('YYYY-MM-DD') : undefined
+                  )
+                }}
+              />
+            </Form.Item>
+            <Form.Item name="endDate" label="วันสุดท้ายผลิต" style={{ flex: 1 }}>
+              <DatePicker
+                style={{ width: '100%' }}
+                format="YYYY-MM-DD"
+                onChange={(val) => {
+                  const start = form.getFieldValue('startDate')
+                  checkAvailability(
+                    start ? start.format('YYYY-MM-DD') : undefined,
+                    val ? val.format('YYYY-MM-DD') : undefined
+                  )
+                }}
+              />
+            </Form.Item>
+          </Space>
+
+          {/* ─── ขั้นที่ 5: Scale + M/C ที่ว่างในช่วงวันนั้น ─── */}
+          <Space style={{ width: '100%' }}>
+            <Form.Item
+              name="scaleId"
+              label="เครื่องชั่ง (Scale)"
+              style={{ flex: 1 }}
+              rules={[{ required: true, message: 'กรุณาเลือก Scale' }]}
+              extra={availabilityLoading
+                ? <span style={{ color: '#1890ff', fontSize: 12 }}>⏳ กำลังตรวจสอบความพร้อม...</span>
+                : busyScales.size > 0 || busyMachines.size > 0
+                  ? <span style={{ color: '#faad14', fontSize: 12 }}>🔒 = ถูกใช้งานในช่วงวันที่เลือก</span>
+                  : undefined}
+            >
               <Select showSearch placeholder="เลือก Scale" optionFilterProp="children">
-                {scales.map(s => (
-                  <Option key={s.scaleId} value={s.scaleId}>
-                    {s.scaleName ?? s.scaleId}
-                  </Option>
-                ))}
+                {scales.map(s => {
+                  const conflict = busyScales.get(s.scaleId)
+                  const isBusy = !!conflict
+                  return (
+                    <Option key={s.scaleId} value={s.scaleId} disabled={isBusy}>
+                      <Tooltip title={isBusy
+                        ? `ถูกใช้งานใน WO #${conflict!.conflictWoId} (${conflict!.conflictLotNo}) ${conflict!.conflictStart ?? ''} → ${conflict!.conflictEnd ?? ''}`
+                        : undefined}>
+                        <span style={{ color: isBusy ? '#bbb' : undefined }}>
+                          {isBusy ? '🔒 ' : ''}{s.scaleName ?? s.scaleId}
+                        </span>
+                      </Tooltip>
+                    </Option>
+                  )
+                })}
               </Select>
             </Form.Item>
 
             <Form.Item name="machineId" label="เครื่องจักร (M/C)" style={{ flex: 1 }} rules={[{ required: true, message: 'กรุณาเลือก M/C' }]}>
               <Select showSearch placeholder="เลือก M/C" optionFilterProp="children" allowClear>
-                {activeMachines.map(m => (
-                  <Option key={m.machineId} value={m.machineId}>
-                    <Space size={4}>
-                      <b>{m.machineName}</b>
-                      {m.machineType && <Tag color={TYPE_COLOR[m.machineType] ?? 'default'} style={{ fontSize: 10 }}>{m.machineType}</Tag>}
-                    </Space>
-                  </Option>
-                ))}
+                {activeMachines.map(m => {
+                  const conflict = busyMachines.get(m.machineId)
+                  const isBusy = !!conflict
+                  return (
+                    <Option key={m.machineId} value={m.machineId} disabled={isBusy}>
+                      <Tooltip title={isBusy
+                        ? `ถูกใช้งานใน WO #${conflict!.conflictWoId} (${conflict!.conflictLotNo}) ${conflict!.conflictStart ?? ''} → ${conflict!.conflictEnd ?? ''}`
+                        : undefined}>
+                        <Space size={4} style={{ color: isBusy ? '#bbb' : undefined }}>
+                          {isBusy ? '🔒 ' : ''}<b>{m.machineName}</b>
+                          {m.machineType && <Tag color={isBusy ? 'default' : (TYPE_COLOR[m.machineType] ?? 'default')} style={{ fontSize: 10 }}>{m.machineType}</Tag>}
+                        </Space>
+                      </Tooltip>
+                    </Option>
+                  )
+                })}
               </Select>
-            </Form.Item>
-          </Space>
-
-          <Form.Item name="lotNo" label="Lot No." rules={[{ required: true, message: 'กรุณากรอก Lot No.' }]}>
-            <Input placeholder="เช่น LOT-2025-001" />
-          </Form.Item>
-
-          <Space style={{ width: '100%' }}>
-            <Form.Item name="startDate" label="วันเริ่มผลิต" style={{ flex: 1 }}>
-              <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" />
-            </Form.Item>
-            <Form.Item name="endDate" label="วันสุดท้ายผลิต" style={{ flex: 1 }}>
-              <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" />
             </Form.Item>
           </Space>
 
