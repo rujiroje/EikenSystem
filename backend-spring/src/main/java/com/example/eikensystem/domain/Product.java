@@ -65,4 +65,12 @@ public class Product {
     /** จำนวนชั่วโมงระหว่างการทำความสะอาด (null หรือ 0 = ปิดการแจ้งเตือน) */
     @Column(name = "cleaner_time")
     private Integer cleanerTime;
+
+    /** ใครอนุมัติการตรวจ Outer Box: QA (default), OPERATOR (self-check), LEADER */
+    @Column(name = "outer_approver_role")
+    private String outerApproverRole = "QA";
+
+    /** หมายเหตุ/คำแนะนำพิเศษสำหรับผู้อนุมัติ Outer */
+    @Column(name = "outer_approver_note")
+    private String outerApproverNote;
 }

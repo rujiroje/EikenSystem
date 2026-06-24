@@ -13,7 +13,7 @@ dataadmin01,da123,DATA_ADMIN
 
 type AdminUser = { username: string; roles: string[]; hasFingerprint: boolean }
 
-const ALL_ROLES = ['OPERATOR', 'LEADER', 'QA', 'ADMIN', 'DATA_ADMIN'] as const
+const ALL_ROLES = ['OPERATOR', 'LEADER', 'QA', 'ADMIN', 'DATA_ADMIN', 'MANAGEMENT'] as const
 
 export function UsersAdmin({ token }: { token: string }) {
   const headers = useMemo(() => ({ 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }), [token])

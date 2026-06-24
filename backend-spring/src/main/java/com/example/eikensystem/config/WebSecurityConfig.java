@@ -31,14 +31,17 @@ public class WebSecurityConfig {
                         .requestMatchers("/health", "/api/auth/**").permitAll()
                         // Data Admin endpoints are restricted to DATA_ADMIN role only
                         .requestMatchers("/api/admin/**").hasRole("DATA_ADMIN")
-                        // Reports: viewable by LEADER and QA
-                        .requestMatchers("/api/reports/**").hasAnyRole("LEADER", "QA", "ADMIN")
+                        // Reports: viewable by LEADER, QA, and MANAGEMENT (read-only)
+                        .requestMatchers("/api/reports/**").hasAnyRole("LEADER", "QA", "ADMIN", "MANAGEMENT")
                         // Approvals: view + actions require auth; actions are further restricted via @PreAuthorize
                         .requestMatchers("/api/approvals/**").authenticated()
-                        // Measurements: operator/qa/leader/admin can use
+                        // Measurements: operator/qa/leader/admin/management(read-only) can use
+                        .requestMatchers(HttpMethod.GET, "/api/measurements/**").hasAnyRole("OPERATOR", "LEADER", "QA", "ADMIN", "MANAGEMENT")
                         .requestMatchers("/api/measurements/**").hasAnyRole("OPERATOR", "LEADER", "QA", "ADMIN")
                         // Products/Scales read: require auth as well (frontend calls after login)
                         .requestMatchers(HttpMethod.GET, "/api/products/**", "/api/scales/**").authenticated()
+                        // Sorting reasons: all authenticated users can read (operator needs it for dropdown)
+                        .requestMatchers(HttpMethod.GET, "/api/sorting-reasons").authenticated()
                         .anyRequest().authenticated()
                 );
         http.addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);

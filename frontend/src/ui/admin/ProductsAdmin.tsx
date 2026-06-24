@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { apiUrl } from '../../api'
-import { Card, Table, Input, InputNumber, Space, Button, message, Select, Modal, Form, Tag, Typography } from 'antd'
+import { Card, Table, Input, InputNumber, Space, Button, message, Select, Modal, Form, Tag, Typography, Tooltip } from 'antd'
 import { EditOutlined, DeleteOutlined, PlusOutlined } from '@ant-design/icons'
 import { CsvImport } from './CsvImport'
 
@@ -29,6 +29,8 @@ type Product = {
   tolerance1?: number
   tolerance2?: number
   cleanerTime?: number | null
+  outerApproverRole?: string
+  outerApproverNote?: string
 }
 
 const emptyProduct: Product = {
@@ -36,6 +38,7 @@ const emptyProduct: Product = {
   productName: '',
   weighingMode: 'SINGLE',
   innerNumberingMode: 'CONTINUOUS',
+  outerApproverRole: 'QA',
 }
 
 export function ProductsAdmin({ token }: { token: string }) {
@@ -124,6 +127,16 @@ export function ProductsAdmin({ token }: { token: string }) {
       render: (v: number) => v ? <Tag color="cyan">{v} ชม.</Tag> : <span style={{ color: '#bbb' }}>-</span>
     },
     {
+      title: 'Outer อนุมัติ', dataIndex: 'outerApproverRole', width: 110,
+      render: (v: string, r: Product) => {
+        const color = v === 'OPERATOR' ? 'green' : v === 'LEADER' ? 'orange' : 'blue'
+        const tag = <Tag color={color}>{v || 'QA'}</Tag>
+        return r.outerApproverNote
+          ? <Tooltip title={r.outerApproverNote}>{tag} 📝</Tooltip>
+          : tag
+      }
+    },
+    {
       title: 'Actions', key: 'actions', width: 110, render: (_: any, r: Product) => (
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>แก้ไข</Button>
@@ -171,6 +184,7 @@ export function ProductsAdmin({ token }: { token: string }) {
         cancelText="ยกเลิก"
         confirmLoading={saving}
         width={600}
+        style={{ maxWidth: '95vw' }}
       >
         <Form layout="vertical" size="small">
           <Form.Item label="Product Code" required>
@@ -226,6 +240,24 @@ export function ProductsAdmin({ token }: { token: string }) {
                 onChange={v => set('innerNumberingMode', v)}
                 options={[{ value: 'CONTINUOUS', label: 'CONTINUOUS — รันต่อเนื่อง' }, { value: 'RESET_PER_OUTER', label: 'RESET — รีเซ็ตทุก Outer' }]}
               />
+            </Form.Item>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 8 }}>
+            <Form.Item label="Outer อนุมัติโดย" tooltip="ใครเป็นผู้ตรวจ/อนุมัติ Outer Box ที่ครบแล้ว">
+              <Select
+                style={{ width: '100%' }}
+                value={draft.outerApproverRole || 'QA'}
+                onChange={v => set('outerApproverRole', v)}
+                options={[
+                  { value: 'QA',       label: 'QA — ตรวจโดย QA' },
+                  { value: 'LEADER',   label: 'Leader — ตรวจโดย Leader' },
+                  { value: 'OPERATOR', label: 'Operator — ตรวจเอง (Auto)' },
+                ]}
+              />
+            </Form.Item>
+            <Form.Item label="หมายเหตุ/คำแนะนำสำหรับผู้อนุมัติ Outer" tooltip="ข้อความนี้จะแสดงเป็น callout ใน Modal อนุมัติ">
+              <Input value={draft.outerApproverNote || ''} onChange={e => set('outerApproverNote', e.target.value)} placeholder="เช่น: ชั่งชิ้นทั้งหมดก่อนอนุมัติ" />
             </Form.Item>
           </div>
 

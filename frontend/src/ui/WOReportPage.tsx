@@ -3,8 +3,9 @@ import {
   Button, Card, Col, DatePicker, Progress, Radio, Row, Select, Space, Statistic, Table, Tag, Tabs, Typography, Tooltip,
 } from 'antd'
 import {
-  CheckCircleOutlined, ClockCircleOutlined, DownloadOutlined, EditOutlined, SwapOutlined,
-  WarningOutlined, ThunderboltOutlined, UserOutlined, BarChartOutlined, GlobalOutlined,
+  CheckCircleOutlined, ClockCircleOutlined, CloseCircleOutlined, ClearOutlined, DownloadOutlined,
+  EditOutlined, InboxOutlined, SwapOutlined, WarningOutlined, ThunderboltOutlined,
+  UserOutlined, BarChartOutlined, GlobalOutlined,
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import * as XLSX from 'xlsx'
@@ -48,6 +49,7 @@ type MixedRow =
   | { rowKind: 'std_change'; barrier: Measurement; stdFrom?: number; stdTo: number }
   | { rowKind: 'relocate_from'; log: ChangeLogEntry }  // moved OUT of this outer
   | { rowKind: 'relocate_to'; log: ChangeLogEntry }    // moved INTO this outer
+  | { rowKind: 'reweigh'; log: ChangeLogEntry }        // original RED → reweighed (overwritten in DB)
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 function getShift(ts: string): { shift: 'day' | 'night'; shiftDate: string } {
@@ -78,7 +80,7 @@ function fmtW(m: Measurement) {
 function rowTimestamp(r: MixedRow): number {
   if (r.rowKind === 'measurement') return new Date(r.m.timestamp).getTime()
   if (r.rowKind === 'std_change') return new Date(r.barrier.timestamp).getTime()
-  return new Date(r.log.createdAt).getTime()
+  return new Date(r.log.createdAt).getTime() // relocate_from, relocate_to, reweigh
 }
 
 // ─── component ────────────────────────────────────────────────────────────────
@@ -170,7 +172,12 @@ export function WOReportPage({ token }: Readonly<{ token: string }>) {
 
   const greenCount = realMeasurements.filter(m => m.status === 'GREEN').length
   const yellowCount = realMeasurements.filter(m => m.status === 'YELLOW').length
-  const redCount = realMeasurements.filter(m => m.status === 'RED').length
+  // RED = currently RED measurements + measurements that were RED but reweighed to GREEN (overwritten in DB)
+  const redReweighedCount = useMemo(
+    () => changeLogs.filter(c => c.changeType === 'MEASUREMENT_REWEIGH' && safeJson(c.description).prevStatus === 'RED').length,
+    [changeLogs]
+  )
+  const redCount = realMeasurements.filter(m => m.status === 'RED').length + redReweighedCount
 
   // Filter exact lotNo match (prevent substring cross-lot contamination e.g. "20260411" matching "20260411-01")
   // Fallback: if JSON parse fails (legacy malformed records), try raw string search for `"lotNo":"<lot>"`
@@ -231,6 +238,16 @@ export function WOReportPage({ token }: Readonly<{ token: string }>) {
           else if (d.newOuter === outer) mixed.push({ rowKind: 'relocate_to', log })
         }
 
+        // Reweigh events: original RED that was overwritten — inject into timeline so it's visible
+        const outerReweighLogs = changeLogs.filter(c => {
+          if (c.changeType !== 'MEASUREMENT_REWEIGH') return false
+          return safeJson(c.description).outerBox === outer
+        })
+        for (const log of outerReweighLogs) {
+          mixed.push({ rowKind: 'reweigh', log })
+        }
+        const redReweighedOuter = outerReweighLogs.filter(l => safeJson(l.description).prevStatus === 'RED').length
+
         mixed.sort((a, b) => rowTimestamp(a) - rowTimestamp(b))
 
         return {
@@ -238,13 +255,15 @@ export function WOReportPage({ token }: Readonly<{ token: string }>) {
           total: ms.length,
           green: ms.filter(m => m.status === 'GREEN').length,
           yellow: ms.filter(m => m.status === 'YELLOW').length,
-          red: ms.filter(m => m.status === 'RED').length,
+          red: ms.filter(m => m.status === 'RED').length + redReweighedOuter,
           firstTime, lastTime, mixed,
-          hasEvents: relevantBarriers.length > 0 || relocateLogs.some(l => { const d = safeJson(l.description); return d.oldOuter === outer || d.newOuter === outer }),
+          hasEvents: relevantBarriers.length > 0
+            || relocateLogs.some(l => { const d = safeJson(l.description); return d.oldOuter === outer || d.newOuter === outer })
+            || outerReweighLogs.length > 0,
         }
       })
       .sort((a, b) => parseInt(a.outer) - parseInt(b.outer))
-  }, [realMeasurements, barrierMeasurements, relocateLogs])
+  }, [realMeasurements, barrierMeasurements, relocateLogs, changeLogs])
 
   // ─── Shift efficiency ─────────────────────────────────────────────────────
   const shiftRows = useMemo(() => {
@@ -485,6 +504,7 @@ export function WOReportPage({ token }: Readonly<{ token: string }>) {
         if (r.rowKind === 'std_change') return <ThunderboltOutlined style={{ color: '#d4380d' }} />
         if (r.rowKind === 'relocate_from') return <SwapOutlined style={{ color: '#d46b08' }} />
         if (r.rowKind === 'relocate_to') return <SwapOutlined style={{ color: '#389e0d' }} />
+        if (r.rowKind === 'reweigh') return <WarningOutlined style={{ color: '#cf1322' }} />
         return null
       },
     },
@@ -493,6 +513,10 @@ export function WOReportPage({ token }: Readonly<{ token: string }>) {
       render: (_: any, r: MixedRow) => {
         if (r.rowKind === 'measurement') return <Tag color="cyan">{r.m.innerBoxOrder}</Tag>
         if (r.rowKind === 'std_change') return <Tag color="volcano">⚡ เปลี่ยน Std</Tag>
+        if (r.rowKind === 'reweigh') {
+          const d = safeJson(r.log.description)
+          return <span><Tag color="cyan">{d.innerOrder ?? '-'}</Tag><Tag color="red" style={{ marginLeft: 2, fontSize: 10 }}>🔄 ชั่งใหม่</Tag></span>
+        }
         if (r.rowKind === 'relocate_from') {
           const d = safeJson(r.log.description)
           return (
@@ -533,6 +557,16 @@ export function WOReportPage({ token }: Readonly<{ token: string }>) {
       render: (_: any, r: MixedRow) => {
         if (r.rowKind === 'measurement') return fmtW(r.m)
         if (r.rowKind === 'std_change') return <Text type="secondary">-</Text>
+        if (r.rowKind === 'reweigh') {
+          const d = safeJson(r.log.description)
+          return (
+            <span>
+              <Text delete style={{ color: '#cf1322', fontSize: 12 }}>{d.prevWeight != null ? Number(d.prevWeight).toFixed(3) : '-'}</Text>
+              <span style={{ color: '#aaa', margin: '0 4px' }}>→</span>
+              <span style={{ fontWeight: 600 }}>{d.newWeight != null ? Number(d.newWeight).toFixed(3) : '-'}</span>
+            </span>
+          )
+        }
         if (r.rowKind === 'relocate_from' || r.rowKind === 'relocate_to') {
           const d = safeJson(r.log.description)
           const wOld = d.oldWeight1 ? `${Number(d.oldWeight1).toFixed(3)}/${Number(d.oldWeight2).toFixed(3)}` : (d.oldWeight ? Number(d.oldWeight).toFixed(3) : '-')
@@ -556,6 +590,9 @@ export function WOReportPage({ token }: Readonly<{ token: string }>) {
               <Tag color="volcano" style={{ marginLeft: 4, fontSize: 10 }}>Std ใหม่</Tag>
             </span>
           )
+        if (r.rowKind === 'reweigh') {
+          return <Tag color="red" style={{ fontSize: 10 }}>QA อนุมัติชั่งใหม่</Tag>
+        }
         if (r.rowKind === 'relocate_from' || r.rowKind === 'relocate_to') {
           const d = safeJson(r.log.description)
           return <span style={{ fontSize: 11, color: '#888' }}>{d.reason ? `"${d.reason}"` : '-'}</span>
@@ -567,6 +604,16 @@ export function WOReportPage({ token }: Readonly<{ token: string }>) {
       title: 'Status', width: 120,
       render: (_: any, r: MixedRow) => {
         if (r.rowKind === 'measurement') return <Tag color={statusColor(r.m.status)}>{r.m.status}</Tag>
+        if (r.rowKind === 'reweigh') {
+          const d = safeJson(r.log.description)
+          return (
+            <span>
+              <Tag color="red">{d.prevStatus ?? 'RED'}</Tag>
+              <span style={{ fontSize: 10, color: '#aaa' }}> → </span>
+              <Tag color={statusColor(d.newStatus ?? '')}>{d.newStatus ?? '-'}</Tag>
+            </span>
+          )
+        }
         if (r.rowKind === 'relocate_from' || r.rowKind === 'relocate_to') {
           const d = safeJson(r.log.description)
           if (d.oldStatus && d.newStatus && d.oldStatus !== d.newStatus)
@@ -846,13 +893,13 @@ export function WOReportPage({ token }: Readonly<{ token: string }>) {
             const tR = ovRows.reduce((s, r) => s + r.red, 0)
             const pr = tT > 0 ? (tG / tT) * 100 : 0
             return (
-              <Row gutter={12} style={{ marginBottom: 16 }}>
-                <Col><Card size="small"><Statistic title="WO ทั้งหมด" value={ovRows.length} /></Card></Col>
-                <Col><Card size="small"><Statistic title="ชั่งรวมทั้งหมด" value={tT} /></Card></Col>
-                <Col><Card size="small"><Statistic title="GREEN รวม" value={tG} valueStyle={{ color: '#52c41a' }} /></Card></Col>
-                <Col><Card size="small"><Statistic title="YELLOW รวม" value={tY} valueStyle={{ color: '#faad14' }} /></Card></Col>
-                <Col><Card size="small"><Statistic title="RED รวม" value={tR} valueStyle={{ color: '#ff4d4f' }} /></Card></Col>
-                <Col>
+              <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+                <Col xs={12} sm={8} md={4}><Card size="small"><Statistic title="WO ทั้งหมด" value={ovRows.length} /></Card></Col>
+                <Col xs={12} sm={8} md={4}><Card size="small"><Statistic title="ชั่งรวมทั้งหมด" value={tT} /></Card></Col>
+                <Col xs={12} sm={8} md={4}><Card size="small"><Statistic title="GREEN รวม" value={tG} valueStyle={{ color: '#52c41a' }} /></Card></Col>
+                <Col xs={12} sm={8} md={4}><Card size="small"><Statistic title="YELLOW รวม" value={tY} valueStyle={{ color: '#faad14' }} /></Card></Col>
+                <Col xs={12} sm={8} md={4}><Card size="small"><Statistic title="RED รวม" value={tR} valueStyle={{ color: '#ff4d4f' }} /></Card></Col>
+                <Col xs={12} sm={8} md={4}>
                   <Card size="small">
                     <Statistic title="Pass Rate รวม" value={pr.toFixed(1)} suffix="%" valueStyle={{ color: pr >= 95 ? '#52c41a' : pr >= 80 ? '#faad14' : '#ff4d4f' }} />
                   </Card>
@@ -905,7 +952,7 @@ export function WOReportPage({ token }: Readonly<{ token: string }>) {
           <Radio.Button value="END">END ({woList.filter(w => w.status === 'END').length})</Radio.Button>
         </Radio.Group>
         <Select
-          showSearch style={{ minWidth: 360 }} placeholder="เลือก Work Order"
+          showSearch style={{ width: '100%', maxWidth: 500 }} placeholder="เลือก Work Order"
           onChange={selectWo} value={selectedWo?.workOrderId ?? undefined} loading={loading}
           filterOption={(inp, opt) => String(opt?.label ?? '').toLowerCase().includes(inp.toLowerCase())}
           options={filteredWoList.map(w => ({ value: w.workOrderId, label: `WO#${w.workOrderId} — ${w.product?.productCode} | Lot: ${w.lotNo} | ${w.status}` }))}
@@ -990,17 +1037,17 @@ export function WOReportPage({ token }: Readonly<{ token: string }>) {
           </Card>
 
           {/* Stats */}
-          <Row gutter={12} style={{ marginBottom: 16 }}>
-            <Col><Card size="small"><Statistic title="ชั่งทั้งหมด" value={realMeasurements.length} /></Card></Col>
-            <Col><Card size="small"><Statistic title="GREEN" value={greenCount} valueStyle={{ color: '#52c41a' }} suffix={<small style={{ fontSize: 11, color: '#999' }}>({realMeasurements.length > 0 ? ((greenCount / realMeasurements.length) * 100).toFixed(1) : 0}%)</small>} /></Card></Col>
-            <Col><Card size="small"><Statistic title="YELLOW" value={yellowCount} valueStyle={{ color: '#faad14' }} /></Card></Col>
-            <Col><Card size="small"><Statistic title="RED" value={redCount} valueStyle={{ color: '#ff4d4f' }} /></Card></Col>
-            <Col><Card size="small"><Statistic title="Outer" value={outerRows.length} /></Card></Col>
-            <Col><Card size="small"><Statistic title="Std เปลี่ยน" value={barrierMeasurements.length} valueStyle={{ color: '#d4380d' }} /></Card></Col>
-            <Col><Card size="small"><Statistic title="Relocate" value={relocateLogs.length} valueStyle={{ color: '#d46b08' }} /></Card></Col>
-            <Col><Card size="small"><Statistic title="QA Reweigh" value={qaReweighLogs.length} valueStyle={{ color: '#722ed1' }} /></Card></Col>
-            <Col><Card size="small"><Statistic title="Re-weigh" value={reweighCount} valueStyle={{ color: '#1677ff' }} /></Card></Col>
-            <Col><Card size="small"><Statistic title="Approvals" value={approvals.length} /></Card></Col>
+          <Row gutter={[12, 12]} style={{ marginBottom: 16 }}>
+            <Col xs={12} sm={8} md={6} lg={4}><Card size="small"><Statistic title="ชั่งทั้งหมด" value={realMeasurements.length} /></Card></Col>
+            <Col xs={12} sm={8} md={6} lg={4}><Card size="small"><Statistic title="GREEN" value={greenCount} valueStyle={{ color: '#52c41a' }} suffix={<small style={{ fontSize: 11, color: '#999' }}>({realMeasurements.length > 0 ? ((greenCount / realMeasurements.length) * 100).toFixed(1) : 0}%)</small>} /></Card></Col>
+            <Col xs={12} sm={8} md={6} lg={4}><Card size="small"><Statistic title="YELLOW" value={yellowCount} valueStyle={{ color: '#faad14' }} /></Card></Col>
+            <Col xs={12} sm={8} md={6} lg={4}><Card size="small"><Statistic title="RED" value={redCount} valueStyle={{ color: '#ff4d4f' }} /></Card></Col>
+            <Col xs={12} sm={8} md={6} lg={4}><Card size="small"><Statistic title="Outer" value={outerRows.length} /></Card></Col>
+            <Col xs={12} sm={8} md={6} lg={4}><Card size="small"><Statistic title="Std เปลี่ยน" value={barrierMeasurements.length} valueStyle={{ color: '#d4380d' }} /></Card></Col>
+            <Col xs={12} sm={8} md={6} lg={4}><Card size="small"><Statistic title="Relocate" value={relocateLogs.length} valueStyle={{ color: '#d46b08' }} /></Card></Col>
+            <Col xs={12} sm={8} md={6} lg={4}><Card size="small"><Statistic title="QA Reweigh" value={qaReweighLogs.length} valueStyle={{ color: '#722ed1' }} /></Card></Col>
+            <Col xs={12} sm={8} md={6} lg={4}><Card size="small"><Statistic title="Re-weigh" value={reweighCount} valueStyle={{ color: '#1677ff' }} /></Card></Col>
+            <Col xs={12} sm={8} md={6} lg={4}><Card size="small"><Statistic title="Approvals" value={approvals.length} /></Card></Col>
           </Row>
 
           <Tabs items={[
@@ -1108,14 +1155,25 @@ export function WOReportPage({ token }: Readonly<{ token: string }>) {
                     { title: 'กะ', width: 88, render: (_: any, r: typeof activityRows[0]) => shiftTag(r.time) },
                     { title: 'ดำเนินการโดย', dataIndex: 'actor', width: 120 },
                     {
-                      title: 'ประเภท', dataIndex: 'type', width: 170,
-                      render: (t: string) => {
-                        if (t === 'ชั่งน้ำหนัก') return <Tag icon={<CheckCircleOutlined />}>ชั่งน้ำหนัก</Tag>
-                        if (t === 'STD_CHANGE') return <Tag icon={<ThunderboltOutlined />} color="volcano">เปลี่ยน Std</Tag>
-                        if (t === 'BOX_RELOCATE') return <Tag icon={<SwapOutlined />} color="orange">Sorting/Relocate</Tag>
-                        if (t === 'QA_OUTER_REWEIGH') return <Tag icon={<EditOutlined />} color="purple">QA Outer Inspect</Tag>
-                        if (t === 'MEASUREMENT_REWEIGH') return <Tag icon={<EditOutlined />} color="blue">Re-weigh</Tag>
-                        if (t.startsWith('APPROVAL')) return <Tag icon={<WarningOutlined />} color="purple">{t.replace('APPROVAL_', '')}</Tag>
+                      title: 'ประเภท', dataIndex: 'type', width: 200,
+                      render: (t: string, r: typeof activityRows[0]) => {
+                        if (t === 'ชั่งน้ำหนัก') {
+                          const m = realMeasurements.find(x => 'M' + x.measurementId === r.key)
+                          const s = m?.status
+                          if (s === 'GREEN')  return <Tag icon={<CheckCircleOutlined />} color="green">ชั่งน้ำหนัก · GREEN</Tag>
+                          if (s === 'YELLOW') return <Tag icon={<WarningOutlined />}     color="gold">ชั่งน้ำหนัก · YELLOW</Tag>
+                          if (s === 'RED')    return <Tag icon={<CloseCircleOutlined />} color="red">ชั่งน้ำหนัก · RED</Tag>
+                          return <Tag icon={<CheckCircleOutlined />}>ชั่งน้ำหนัก</Tag>
+                        }
+                        if (t === 'RED_EVENT')           return <Tag icon={<WarningOutlined />}      color="red">🔴 RED Event</Tag>
+                        if (t === 'STD_CHANGE')          return <Tag icon={<ThunderboltOutlined />}  color="volcano">เปลี่ยน Std</Tag>
+                        if (t === 'STD_CHANGE_REQUEST')  return <Tag icon={<EditOutlined />}         color="gold">📝 ขอเปลี่ยน Std</Tag>
+                        if (t === 'OUTER_INSPECTION')    return <Tag icon={<InboxOutlined />}        color="geekblue">📦 Outer Inspection</Tag>
+                        if (t === 'QA_OUTER_REWEIGH')    return <Tag icon={<EditOutlined />}         color="purple">QA Outer Inspect</Tag>
+                        if (t === 'MEASUREMENT_REWEIGH') return <Tag icon={<EditOutlined />}         color="blue">Re-weigh</Tag>
+                        if (t === 'BOX_RELOCATE')        return <Tag icon={<SwapOutlined />}         color="orange">Sorting/Relocate</Tag>
+                        if (t === 'CLEANING_CHECK')      return <Tag icon={<ClearOutlined />}        color="cyan">🧹 Cleaning</Tag>
+                        if (t.startsWith('APPROVAL'))    return <Tag icon={<WarningOutlined />}      color="magenta">{t.replace('APPROVAL_', '')}</Tag>
                         return <Tag>{t}</Tag>
                       },
                     },

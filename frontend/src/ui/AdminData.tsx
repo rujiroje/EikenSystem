@@ -5,6 +5,7 @@ import { UsersAdmin } from './admin/UsersAdmin'
 import { ProductsAdmin } from './admin/ProductsAdmin'
 import { ScalesAdmin } from './admin/ScalesAdmin'
 import { MachinesAdmin } from './admin/MachinesAdmin'
+import { SortingReasonsAdmin } from './admin/SortingReasonsAdmin'
 import { apiUrl } from '../api'
 
 export function AdminData({ token }: Readonly<{ token: string }>) {
@@ -77,8 +78,10 @@ export function AdminData({ token }: Readonly<{ token: string }>) {
           { key: 'products', label: 'จัดการสินค้า (Products)',     children: <ProductsAdmin token={token} /> },
           { key: 'scales',   label: 'จัดการเครื่องชั่ง (Scales)', children: <ScalesAdmin token={token} /> },
           { key: 'machines', label: 'จัดการเครื่องจักร (M/C)',    children: <MachinesAdmin token={token} /> },
+          { key: 'sorting-reasons', label: 'เหตุผล Sorting',        children: <SortingReasonsAdmin token={token} /> },
         ]}
         type="card"
+        tabBarStyle={{ overflowX: 'auto', flexWrap: 'nowrap' }}
       />
     </div>
   )

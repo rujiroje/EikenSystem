@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
-import { Card, Table, Tag, Button, Space, Typography, Alert, Switch, Select, Modal, Input as AntInput, Tooltip } from 'antd'
+import { Card, Table, Tag, Button, Space, Typography, Alert, Switch, Select, Modal, Input as AntInput, Tooltip, Progress, Statistic } from 'antd'
 import { apiUrl } from '../api'
 
 type MachineStatus = {
@@ -24,9 +24,15 @@ type MachineStatus = {
   pendingStdLeader: number
   needsQa: boolean
   needsLeader: boolean
+  measurementCount?: number
+  targetTubes?: number
+  quantityPerMeasurement?: number
+  greenCount?: number
+  yellowCount?: number
+  redCount?: number
 }
 
-export function QADashboard({ token, username }: { token: string; username: string }) {
+export function QADashboard({ token, username, readOnly = false }: { token: string; username: string; readOnly?: boolean }) {
   const [items, setItems] = useState<MachineStatus[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -67,6 +73,8 @@ export function QADashboard({ token, username }: { token: string; username: stri
   const [qaScaleStep, setQaScaleStep] = useState(0) // DOUBLE: 0=W1 1=W2
   const qaScaleRef = useRef<any>(null)
   const [woList, setWoList] = useState<any[]>([])
+  // cache recalc samples per approval ID (productCode|scaleId|lotNo → {samples, avg})
+  const [recalcSamplesCache, setRecalcSamplesCache] = useState<Record<string, {samples: number[], avg: number}>>({})
 
   const fetchStatus = useCallback(async () => {
     setLoading(true)
@@ -117,9 +125,30 @@ export function QADashboard({ token, username }: { token: string; username: stri
         return
       }
       const r4 = await fetch(apiUrl('/api/approvals/outer-inspection/pending'), { headers })
-      setPendingApply(r2.ok ? (await r2.json()) : [])
+      const applyList = r2.ok ? (await r2.json()) : []
+      setPendingApply(applyList)
       setPendingRedEvents(r3.ok ? (await r3.json()) : [])
       setPendingOuterInspections(r4.ok ? (await r4.json()) : [])
+
+      // ดึง RECALC_SAMPLE จริงจาก DB สำหรับ recalcFromRed approvals
+      const recalcApprovals = applyList.filter((a: any) => {
+        try { const p = JSON.parse(a.payloadJson || '{}'); return p.recalcFromRed === true } catch { return false }
+      })
+      const newCache: Record<string, {samples: number[], avg: number}> = {}
+      await Promise.all(recalcApprovals.map(async (a: any) => {
+        try {
+          const p = JSON.parse(a.payloadJson || '{}')
+          const key = `${p.productCode}|${p.scaleId}|${p.lotNo}`
+          const res = await fetch(apiUrl(`/api/measurements/recalc-samples?productCode=${encodeURIComponent(p.productCode)}&scaleId=${encodeURIComponent(p.scaleId)}&lotNo=${encodeURIComponent(p.lotNo)}`), { headers })
+          if (res.ok) {
+            const data = await res.json()
+            if (data.active && Array.isArray(data.samples)) {
+              newCache[key] = { samples: data.samples.map((s: any) => Number(s.weight)), avg: Number(data.avg) }
+            }
+          }
+        } catch { /* ignore */ }
+      }))
+      if (Object.keys(newCache).length > 0) setRecalcSamplesCache(prev => ({ ...prev, ...newCache }))
     } catch {
       // ignore
     }
@@ -261,11 +290,12 @@ export function QADashboard({ token, username }: { token: string; username: stri
   }
 
   useEffect(() => {
+    if (readOnly) return
     reloadQaLists()
     if (!autoRefresh) return
     const t = setInterval(reloadQaLists, Math.max(8, refreshSec * 2) * 1000)
     return () => clearInterval(t)
-  }, [autoRefresh, refreshSec, reloadQaLists])
+  }, [autoRefresh, refreshSec, reloadQaLists, readOnly])
 
   // เตรียมค่าเริ่มต้นสำหรับ input ของแต่ละ pendingApply เมื่อรายการเปลี่ยน
   useEffect(() => {
@@ -302,10 +332,13 @@ export function QADashboard({ token, username }: { token: string; username: stri
 
   const criticalCount = items.filter(x => x.needsQa).length
   const activeCount = items.filter(x => x.active).length
+  const totalActualTubes = items.reduce((s, r) => s + (r.measurementCount ?? 0) * (r.quantityPerMeasurement ?? 0), 0)
+  const totalTargetTubes = items.reduce((s, r) => s + (r.targetTubes ?? 0), 0)
+  const overallPct = totalTargetTubes > 0 ? Math.round((totalActualTubes / totalTargetTubes) * 100) : 0
 
   const columns = [
     {
-      title: 'Machine', key: 'machine',
+      title: 'Machine', key: 'machine', width: '13%',
       render: (_: any, r: MachineStatus) => {
         const todayStr = new Date().toISOString().substring(0, 10)
         const scheduledWos = woList.filter((wo: any) =>
@@ -327,52 +360,13 @@ export function QADashboard({ token, username }: { token: string; username: stri
       }
     },
     {
-      title: 'Scale', key: 'scale',
+      title: 'Scale', key: 'scale', width: '8%',
       render: (_: any, r: MachineStatus) => r.scaleId
         ? <Tag>{r.scaleId}{r.scaleName ? ` - ${r.scaleName}` : ''}</Tag>
         : <span style={{ color: '#bbb' }}>—</span>
     },
     {
-      title: 'WO วันนี้', key: 'scheduledWo',
-      render: (_: any, r: MachineStatus) => {
-        const todayStr = new Date().toISOString().substring(0, 10)
-        const scheduledWos = woList.filter((wo: any) =>
-          wo.status === 'ACTIVE' &&
-          wo.machine?.machineId === r.machineId &&
-          (wo.startDate == null || wo.startDate <= todayStr) &&
-          (wo.endDate == null || wo.endDate >= todayStr)
-        )
-        if (scheduledWos.length === 0) return <span style={{ color: '#bbb' }}>—</span>
-        return (
-          <Space direction="vertical" size={2}>
-            {scheduledWos.map((wo: any) => {
-              const isRunning = r.active && (r.workOrderId === wo.workOrderId || r.lastLotNo === wo.lotNo)
-              return (
-                <Tooltip
-                  key={wo.workOrderId}
-                  title={
-                    <span>
-                      Product: {wo.product?.productCode} — {wo.product?.productName}<br />
-                      Scale: {wo.scale?.scaleId}<br />
-                      วันผลิต: {wo.startDate ?? '∞'} → {wo.endDate ?? '∞'}<br />
-                      สร้างโดย: {wo.createdBy}<br />
-                      {wo.operatorNames && <>Operator: {wo.operatorNames}</>}
-                    </span>
-                  }
-                >
-                  <Tag color={isRunning ? 'green' : 'orange'} style={{ cursor: 'default', fontSize: 11 }}>
-                    {isRunning ? '▶ ' : '⏸ '}WO #{wo.workOrderId} · {wo.lotNo}
-                    <span style={{ marginLeft: 4, opacity: 0.8 }}>[{wo.product?.productCode}]</span>
-                  </Tag>
-                </Tooltip>
-              )
-            })}
-          </Space>
-        )
-      }
-    },
-    {
-      title: 'Product / Lot', key: 'product',
+      title: 'Product / Lot', key: 'product', width: '10%',
       render: (_: any, r: MachineStatus) => r.active ? (
         <span>
           <b>{r.lastProductCode || '-'}</b>
@@ -381,7 +375,7 @@ export function QADashboard({ token, username }: { token: string; username: stri
       ) : <span style={{ color: '#bbb' }}>—</span>
     },
     {
-      title: 'ตำแหน่งปัจจุบัน', key: 'pos',
+      title: 'ตำแหน่งปัจจุบัน', key: 'pos', width: '11%',
       render: (_: any, r: MachineStatus) => r.active ? (
         <span style={{ fontFamily: 'monospace' }}>
           Outer <b>{r.lastOuterBox || '-'}</b> / Inner <b>{r.lastInnerOrder || '-'}</b>
@@ -389,7 +383,37 @@ export function QADashboard({ token, username }: { token: string; username: stri
       ) : <span style={{ color: '#bbb' }}>—</span>
     },
     {
-      title: 'สถานะล่าสุด', key: 'lastStatus',
+      title: 'จำนวนหลอด', key: 'totalTubes', width: '8%',
+      render: (_: any, r: MachineStatus) => {
+        if (!r.active) return <span style={{ color: '#bbb' }}>—</span>
+        const count = r.measurementCount ?? 0
+        const qpm   = r.quantityPerMeasurement ?? 0
+        if (!qpm) return <span style={{ color: '#bbb', fontSize: 11 }}>—</span>
+        return <b style={{ fontFamily: 'monospace' }}>{(count * qpm).toLocaleString('th-TH')}</b>
+      }
+    },
+    {
+      title: 'ประสิทธิภาพ', key: 'efficiency', width: '11%',
+      render: (_: any, r: MachineStatus) => {
+        if (!r.active) return <span style={{ color: '#bbb' }}>—</span>
+        const qpm    = r.quantityPerMeasurement ?? 0
+        const actual = (r.measurementCount ?? 0) * qpm
+        const target = r.targetTubes ?? 0
+        if (!target || !qpm) return <span style={{ color: '#bbb', fontSize: 11 }}>ไม่มี Target</span>
+        const pct   = Math.min(100, Math.round((actual / target) * 100))
+        const color = pct >= 100 ? '#52c41a' : pct >= 75 ? '#1677ff' : pct >= 50 ? '#faad14' : '#ff4d4f'
+        return (
+          <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
+            <Progress percent={pct} size="small" strokeColor={color} format={p => `${p}%`} />
+            <span style={{ fontSize:10, color:'#888', fontFamily:'monospace' }}>
+              {actual.toLocaleString('th-TH')} / {target.toLocaleString('th-TH')}
+            </span>
+          </div>
+        )
+      }
+    },
+    {
+      title: 'สถานะล่าสุด', key: 'lastStatus', width: '7%',
       render: (_: any, r: MachineStatus) => {
         if (!r.active) return <span style={{ color: '#bbb' }}>—</span>
         const v = r.lastStatus
@@ -397,7 +421,7 @@ export function QADashboard({ token, username }: { token: string; username: stri
       }
     },
     {
-      title: 'รายการรออนุมัติ', key: 'pending',
+      title: 'รออนุมัติ', key: 'pending', width: '14%',
       render: (_: any, r: MachineStatus) => {
         const tags: React.ReactNode[] = []
         if (r.pendingRed > 0)        tags.push(<Tag key="red"   color="red"      style={{ fontSize: 11 }}>🔴 RED ×{r.pendingRed}</Tag>)
@@ -409,7 +433,7 @@ export function QADashboard({ token, username }: { token: string; username: stri
       }
     },
     {
-      title: 'YELLOW ต่อเนื่อง', dataIndex: 'consecutiveYellow',
+      title: 'YELLOW', dataIndex: 'consecutiveYellow', width: '9%',
       render: (v: number, r: MachineStatus) => {
         if (!r.active) return <span style={{ color: '#bbb' }}>—</span>
         return (
@@ -422,7 +446,7 @@ export function QADashboard({ token, username }: { token: string; username: stri
       }
     },
     {
-      title: 'ต้องการดำเนินการ', key: 'needsAction',
+      title: 'ดำเนินการ', key: 'needsAction', width: '9%',
       render: (_: any, r: MachineStatus) => {
         const todayStr = new Date().toISOString().substring(0, 10)
         const scheduledWos = woList.filter((wo: any) =>
@@ -446,7 +470,7 @@ export function QADashboard({ token, username }: { token: string; username: stri
       <Card
         title={
           <Space>
-            <Typography.Text strong>QA Dashboard</Typography.Text>
+            <Typography.Text strong>{readOnly ? 'Dashboard' : 'QA Dashboard'}</Typography.Text>
             <Tag>{items.length} machines</Tag>
             <Tag color={criticalCount>0?'red':undefined}>ต้องการ QA: {criticalCount}</Tag>
           </Space>
@@ -469,10 +493,114 @@ export function QADashboard({ token, username }: { token: string; username: stri
             <Button onClick={() => { fetchStatus(); reloadQaLists(); }} loading={loading}>รีเฟรช</Button>
           </Space>
         }
+        styles={{ body: { overflow: 'hidden' } }}
       >
-        <Table dataSource={items.map((x) => ({ key: x.machineId, ...x }))} columns={columns as any} pagination={false} />
+        {/* Efficiency Per-Machine Visual — MANAGEMENT only */}
+        {readOnly && items.length > 0 && (
+          <>
+            <div style={{ marginBottom: 12 }}>
+              <Typography.Text strong style={{ fontSize: 15 }}>📊 ประสิทธิภาพแต่ละเครื่อง</Typography.Text>
+            </div>
+            {totalTargetTubes > 0 && (
+              <div style={{ marginBottom: 20, padding: '14px 18px', background: 'linear-gradient(90deg, #f6ffed 0%, #e6f4ff 100%)', borderRadius: 8, border: '1px solid #b7eb8f' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <Typography.Text strong style={{ fontSize: 14 }}>ภาพรวมทั้งหมด</Typography.Text>
+                  <Typography.Text strong style={{ fontSize: 22, color: overallPct >= 90 ? '#52c41a' : overallPct >= 75 ? '#1677ff' : overallPct >= 50 ? '#faad14' : '#ff4d4f' }}>
+                    {overallPct}%
+                  </Typography.Text>
+                </div>
+                <Progress
+                  percent={overallPct}
+                  strokeColor={overallPct >= 90 ? '#52c41a' : overallPct >= 75 ? '#1677ff' : overallPct >= 50 ? '#faad14' : '#ff4d4f'}
+                />
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  {totalActualTubes.toLocaleString('th-TH')} / {totalTargetTubes.toLocaleString('th-TH')} หลอด
+                </Typography.Text>
+              </div>
+            )}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(clamp(160px, 24%, 400px), 1fr))', gap: 16, marginBottom: 20 }}>
+              {items.map(r => {
+                const qpm = r.quantityPerMeasurement ?? 0
+                const actual = (r.measurementCount ?? 0) * qpm
+                const target = r.targetTubes ?? 0
+                const hasTarget = target > 0 && qpm > 0
+                const pct = hasTarget ? Math.min(100, Math.round((actual / target) * 100)) : 0
+                const statusColor = !r.active ? '#d9d9d9'
+                  : !hasTarget ? '#bfbfbf'
+                  : pct >= 100 ? '#52c41a'
+                  : pct >= 75 ? '#1677ff'
+                  : pct >= 50 ? '#faad14'
+                  : '#ff4d4f'
+                const totalWeighed = (r.greenCount ?? 0) + (r.yellowCount ?? 0) + (r.redCount ?? 0)
+                return (
+                  <div key={r.machineId} style={{
+                    background: '#fff',
+                    border: `2px solid ${r.active ? statusColor : '#f0f0f0'}`,
+                    borderRadius: 12,
+                    padding: '16px 10px',
+                    textAlign: 'center',
+                    boxShadow: r.active && hasTarget ? `0 4px 20px ${statusColor}40` : '0 2px 8px rgba(0,0,0,0.06)',
+                  }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 6, color: r.active ? '#222' : '#999' }}>
+                        {r.machineId}
+                        {r.machineName && r.machineName !== r.machineId && (
+                          <div style={{ fontSize: 10, fontWeight: 400, color: '#aaa' }}>{r.machineName}</div>
+                        )}
+                      </div>
+                      <Progress
+                        type="circle"
+                        percent={hasTarget ? pct : 0}
+                        size={88}
+                        strokeColor={statusColor}
+                        trailColor="#f5f5f5"
+                        format={() => !r.active ? (
+                          <span style={{ fontSize: 11, color: '#bbb' }}>—</span>
+                        ) : !hasTarget ? (
+                          <span style={{ fontSize: 10, color: '#aaa', display: 'block' }}>ไม่มี Target</span>
+                        ) : (
+                          <span style={{ fontSize: 15, fontWeight: 800, color: statusColor }}>{pct}%</span>
+                        )}
+                      />
+                      <div style={{ marginTop: 10, minHeight: 40 }}>
+                        <div style={{ fontSize: 11, color: r.active ? '#555' : '#aaa', marginBottom: 2 }}>
+                          {r.active ? (r.lastProductCode || '—') : 'ไม่มีการทำงาน'}
+                        </div>
+                        {r.active && hasTarget && (
+                          <div>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: statusColor }}>{actual.toLocaleString('th-TH')}</span>
+                            <span style={{ fontSize: 10, color: '#aaa' }}> / {target.toLocaleString('th-TH')} หลอด</span>
+                          </div>
+                        )}
+                        {r.active && totalWeighed > 0 && (
+                          <div style={{ display: 'flex', gap: 3, justifyContent: 'center', marginTop: 6, flexWrap: 'wrap' }}>
+                            {(r.greenCount ?? 0) > 0 && <span style={{ fontSize: 9, background: '#f6ffed', color: '#389e0d', border: '1px solid #d9f7be', borderRadius: 4, padding: '1px 5px', fontWeight: 600 }}>✓ {r.greenCount}</span>}
+                            {(r.yellowCount ?? 0) > 0 && <span style={{ fontSize: 9, background: '#fffbe6', color: '#ad8b00', border: '1px solid #ffe58f', borderRadius: 4, padding: '1px 5px', fontWeight: 600 }}>⚠ {r.yellowCount}</span>}
+                            {(r.redCount ?? 0) > 0 && <span style={{ fontSize: 9, background: '#fff2f0', color: '#cf1322', border: '1px solid #ffa39e', borderRadius: 4, padding: '1px 5px', fontWeight: 600 }}>✕ {r.redCount}</span>}
+                          </div>
+                        )}
+                      </div>
+                  </div>
+                )
+              })}
+            </div>
+          </>
+        )}
+
+        {/* Summary widgets */}
+        <Space wrap style={{ marginBottom: 10 }}>
+          <Card size="small"><Statistic title="Active Machines" value={activeCount} suffix={`/ ${items.length}`} /></Card>
+          <Card size="small">
+            <Statistic title="ผลผลิตรวม" value={totalActualTubes.toLocaleString('th-TH')} suffix="หลอด"
+              valueStyle={{ color: totalTargetTubes > 0 && overallPct >= 90 ? '#52c41a' : '#faad14' }} />
+            {totalTargetTubes > 0 && <Typography.Text type="secondary" style={{ fontSize: 11 }}>เป้า {totalTargetTubes.toLocaleString('th-TH')} หลอด ({overallPct}%)</Typography.Text>}
+          </Card>
+        </Space>
+        <div style={{ overflowX: 'auto' }}>
+          <Table dataSource={items.map((x) => ({ key: x.machineId, ...x }))} columns={columns as any} pagination={false} scroll={{ x: '100%' }} />
+        </div>
       </Card>
 
+      {!readOnly && <>
       <Card title={<Space><Typography.Text strong>รอ Apply Std ใหม่</Typography.Text><Tag color={pendingApply.length>0?'gold':undefined}>{pendingApply.length}</Tag></Space>}>
         {pendingApply.length === 0 ? <Alert type="success" message="ยังไม่มีรายการรอ Apply Std" /> : (
           <div style={{ display:'grid', gap:12 }}>
@@ -510,11 +638,57 @@ export function QADashboard({ token, username }: { token: string; username: stri
                 setApplyInputs(v => ({ ...v, [id]: { ...emptyInput, ...(v[id] || {}), newMin: sugMin.toFixed(3), newMax: sugMax!.toFixed(3), newDMin: sugDMin!.toFixed(3), newDMax: sugDMax!.toFixed(3) } }))
               }
 
+              // สีตามการจำแนก (GREEN/YELLOW/RED) ของแต่ละค่าน้ำหนัก
+              const pStdNum = !isDouble && payload.proposedStd != null ? Number(payload.proposedStd) : null
+              const wClassMin  = wpp != null && pStdNum != null ? pStdNum - wpp / 2 + 1 : null
+              const wClassMax  = wpp != null && pStdNum != null ? pStdNum + wpp / 2 + 1 : null
+              const wClassDMin = wpp != null && pStdNum != null ? pStdNum - wpp / 4   : null
+              const wClassDMax = wpp != null && pStdNum != null ? pStdNum + wpp / 4   : null
+              const classifyW = (w: number): string => {
+                if (wClassMin == null || wClassMax == null || wClassDMin == null || wClassDMax == null) return 'blue'
+                if (w < wClassMin || w > wClassMax) return 'red'
+                if (w >= wClassDMin && w <= wClassDMax) return 'green'
+                return 'gold'
+              }
+              const weights5Status: string[] = payload.weights5Status || []
+              const tagColorFor = (w: any, i: number): string => {
+                if (weights5Status[i]) {
+                  const s = weights5Status[i].toUpperCase()
+                  return s === 'GREEN' ? 'green' : s === 'RED' ? 'red' : 'gold'
+                }
+                return classifyW(Number(w))
+              }
+              // DOUBLE mode: classify W1/W2 against their own proposed Std
+              const pStd1Num = isDouble && (payload.proposedStd1 ?? payload.avgWeight1) != null ? Number(payload.proposedStd1 ?? payload.avgWeight1) : null
+              const pStd2Num = isDouble && (payload.proposedStd2 ?? payload.avgWeight2) != null ? Number(payload.proposedStd2 ?? payload.avgWeight2) : null
+              const mkBounds = (std: number | null) => std != null && wpp != null
+                ? { min: std - wpp / 2 + 1, max: std + wpp / 2 + 1, dmin: std - wpp / 4, dmax: std + wpp / 4 }
+                : null
+              const bounds1 = mkBounds(pStd1Num)
+              const bounds2 = mkBounds(pStd2Num)
+              const classifyDouble = (w: number, bounds: { min: number; max: number; dmin: number; dmax: number } | null): string => {
+                if (!bounds) return 'blue'
+                if (w < bounds.min || w > bounds.max) return 'red'
+                if (w >= bounds.dmin && w <= bounds.dmax) return 'green'
+                return 'gold'
+              }
+
               // Weights display
               const weights5    = payload.weights5    || []
               const weights5_1  = payload.weights5_1  || []
               const weights5_2  = payload.weights5_2  || []
-              const allWeights  = payload.allWeights  || payload.weightsAll || []
+              const isRecalcFromRed = payload.recalcFromRed === true
+              // สำหรับ recalcFromRed: ใช้ข้อมูล RECALC_SAMPLE จริงจาก DB (ผ่าน /api/measurements/recalc-samples)
+              const recalcCacheKey = `${payload.productCode}|${payload.scaleId}|${payload.lotNo}`
+              const cachedRecalc = isRecalcFromRed ? recalcSamplesCache[recalcCacheKey] : undefined
+              const recalcLiveWeights: number[] = cachedRecalc?.samples ?? []
+              // payload weights fallback (format ใหม่ allWeights หรือ format เก่า sampleWeightsJson)
+              const parseSampleWeightsJson = (): number[] => {
+                try { return typeof payload.sampleWeightsJson === 'string' ? JSON.parse(payload.sampleWeightsJson) : [] } catch { return [] }
+              }
+              const allWeightsPayload = payload.allWeights || payload.weightsAll || (isRecalcFromRed ? parseSampleWeightsJson() : []) || []
+              // ถ้า recalcFromRed → ใช้ live data จาก DB ก่อน ถ้าไม่มีค่อย fallback ไป payload
+              const allWeights  = isRecalcFromRed ? (recalcLiveWeights.length > 0 ? recalcLiveWeights : allWeightsPayload) : allWeightsPayload
               const allWeights1 = payload.allWeights1 || []
               const allWeights2 = payload.allWeights2 || []
               const isInitialStd = allWeights.length > 0 || allWeights1.length > 0
@@ -525,7 +699,9 @@ export function QADashboard({ token, username }: { token: string; username: stri
               // DOUBLE
               const displayW1 = allWeights1.length > 0 ? allWeights1 : weights5_1
               const displayW2 = allWeights2.length > 0 ? allWeights2 : weights5_2
-              const typeLabel = isInitialStd
+              const typeLabel = isRecalcFromRed && allWeights.length > 0
+                ? `Recalc Std ×${allWeights.length} — กล่องตัวอย่าง`
+                : isInitialStd
                 ? `Initial Std — Inner กล่องแรก`
                 : `YELLOW ×5 — ค่าที่ใช้คำนวณ Std ใหม่`
               const avgW  = displayWeights.length > 0 ? displayWeights.reduce((s: number, w: any) => s + Number(w), 0) / displayWeights.length : null
@@ -565,7 +741,7 @@ export function QADashboard({ token, username }: { token: string; username: stri
                         <>
                           <div style={{ display:'flex', flexWrap:'wrap', gap:4 }}>
                             {displayWeights.map((w: any, i: number) => (
-                              <Tag key={i} color="blue" style={{ fontFamily:'monospace', fontSize:12 }}>
+                              <Tag key={i} color={tagColorFor(w, i)} style={{ fontFamily:'monospace', fontSize:12 }}>
                                 {typeof w === 'number' ? w.toFixed(3) : String(w)}
                               </Tag>
                             ))}
@@ -585,7 +761,7 @@ export function QADashboard({ token, username }: { token: string; username: stri
                               <div style={{ fontSize:11, fontWeight:600, color:'#555', marginBottom:3 }}>{label}</div>
                               <div style={{ display:'flex', flexWrap:'wrap', gap:4 }}>
                                 {vals.map((w: any, i: number) => (
-                                  <Tag key={i} color="blue" style={{ fontFamily:'monospace', fontSize:12 }}>
+                                  <Tag key={i} color={classifyDouble(Number(w), label === 'W1' ? bounds1 : bounds2)} style={{ fontFamily:'monospace', fontSize:12 }}>
                                     {typeof w === 'number' ? w.toFixed(3) : String(w)}
                                   </Tag>
                                 ))}
@@ -617,7 +793,7 @@ export function QADashboard({ token, username }: { token: string; username: stri
                         <div style={{ fontSize:11, color:'#888', marginBottom:2 }}>Std ใหม่</div>
                         <input placeholder="เช่น 375.000" value={inputVal.newStd}
                           onChange={e => setInput('newStd', e.target.value)}
-                          style={{ width:120 }} />
+                          style={{ width:120, background:'#f5f5f5' }} disabled />
                       </div>
                     ) : (
                       <>
@@ -625,13 +801,13 @@ export function QADashboard({ token, username }: { token: string; username: stri
                           <div style={{ fontSize:11, color:'#888', marginBottom:2 }}>Std 1 ใหม่</div>
                           <input placeholder="Std 1" value={inputVal.newStd1}
                             onChange={e => setInput('newStd1', e.target.value)}
-                            style={{ width:110 }} />
+                            style={{ width:110, background:'#f5f5f5' }} disabled />
                         </div>
                         <div>
                           <div style={{ fontSize:11, color:'#888', marginBottom:2 }}>Std 2 ใหม่</div>
                           <input placeholder="Std 2" value={inputVal.newStd2}
                             onChange={e => setInput('newStd2', e.target.value)}
-                            style={{ width:110 }} />
+                            style={{ width:110, background:'#f5f5f5' }} disabled />
                         </div>
                       </>
                     )}
@@ -641,17 +817,10 @@ export function QADashboard({ token, username }: { token: string; username: stri
                   {!isDouble && (
                     <div style={{ marginBottom:10, padding:'8px 10px', background:'#f6ffed', border:'1px solid #d9f7be', borderRadius:4 }}>
                       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
-                        <span style={{ fontSize:12, fontWeight:'bold', color:'#389e0d' }}>ตรวจสอบช่วงน้ำหนัก</span>
-                        <Space size={4}>
-                          {sugMin != null && (
-                            <Button size="small" type="dashed" onClick={fillSuggested} style={{ fontSize:11 }}>
-                              ↑ ใช้ค่าแนะนำทั้งหมด
-                            </Button>
-                          )}
-                          {wpp == null && productCode && (
-                            <span style={{ fontSize:11, color:'#aaa' }}>กำลังโหลดข้อมูลสินค้า...</span>
-                          )}
-                        </Space>
+                        <span style={{ fontSize:12, fontWeight:'bold', color:'#389e0d' }}>ตรวจสอบช่วงน้ำหนัก (ระบบคำนวณให้อัตโนมัติ)</span>
+                        {wpp == null && productCode && (
+                          <span style={{ fontSize:11, color:'#aaa' }}>กำลังโหลดข้อมูลสินค้า...</span>
+                        )}
                       </div>
                       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 }}>
                         {([
@@ -674,14 +843,12 @@ export function QADashboard({ token, username }: { token: string; username: stri
                             </div>
                             <div style={{ display:'flex', gap:4 }}>
                               <input
-                                style={{ width:100 }}
+                                style={{ width:100, background:'#f5f5f5' }}
                                 placeholder={sug != null ? sug.toFixed(3) : '---'}
-                                value={(inputVal as any)[key]}
+                                value={(inputVal as any)[key] || (sug != null ? sug.toFixed(3) : '')}
                                 onChange={e => setInput(key, e.target.value)}
+                                disabled
                               />
-                              {sug != null && (inputVal as any)[key] === '' && (
-                                <Button size="small" onClick={() => setInput(key, sug.toFixed(3))} style={{ fontSize:11, padding:'0 6px' }}>↑</Button>
-                              )}
                             </div>
                           </div>
                         ))}
@@ -693,8 +860,9 @@ export function QADashboard({ token, username }: { token: string; username: stri
                   <div style={{ display:'flex', gap:8, alignItems:'center' }}>
                     <input placeholder="เหตุผล" value={inputVal.reason}
                       onChange={e => setInput('reason', e.target.value)}
-                      style={{ flex:1, minWidth:200 }} />
-                    <Button type="primary" onClick={async () => {
+                      style={{ flex:1, minWidth:0 }}
+                      disabled={readOnly} />
+                    {!readOnly && <Button type="primary" disabled={!inputVal.reason.trim()} onClick={async () => {
                       const ns = parseFloat(inputVal.newStd)
                       const ns1 = parseFloat(inputVal.newStd1)
                       const ns2 = parseFloat(inputVal.newStd2)
@@ -729,7 +897,7 @@ export function QADashboard({ token, username }: { token: string; username: stri
                       })
                       if (r.ok) { setMsg('บันทึกค่า Std ใหม่เรียบร้อย'); reloadQaLists(); fetchStatus(); }
                       else { setMsg('บันทึก Std ใหม่ไม่สำเร็จ'); }
-                    }}>Apply Std</Button>
+                    }}>Apply Std</Button>}
                   </div>
                 </div>
               )
@@ -776,9 +944,10 @@ export function QADashboard({ token, username }: { token: string; username: stri
         open={outerModalOpen}
         onCancel={() => setOuterModalOpen(false)}
         width={800}
+        style={{ maxWidth: '95vw' }}
         footer={[
           <Button key="cancel" onClick={() => setOuterModalOpen(false)}>ปิด</Button>,
-          <Button key="approve" type="primary" onClick={async () => {
+          ...(!readOnly ? [<Button key="approve" type="primary" onClick={async () => {
             if (!outerModalApproval) return
             const r = await fetch(apiUrl(`/api/approvals/${outerModalApproval.id}/approve-outer`), {
               method: 'POST',
@@ -794,7 +963,7 @@ export function QADashboard({ token, username }: { token: string; username: stri
             }
           }}>
             อนุมัติผ่าน (QA)
-          </Button>
+          </Button>] : [])
         ]}
       >
         {outerMeasLoading ? (
@@ -982,11 +1151,11 @@ export function QADashboard({ token, username }: { token: string; username: stri
                       {it.requestedAt && <> · {new Date(it.requestedAt).toLocaleString('th-TH', { dateStyle:'short', timeStyle:'short' })}</>}
                     </Typography.Text>
                   </div>
-                  <div style={{ display:'flex', gap:8, marginTop:8 }}>
+                  {!readOnly && <div style={{ display:'flex', gap:8, marginTop:8 }}>
                     <input
                       placeholder="เหตุผลในการอนุมัติ (บังคับ)"
                       id={`red-note-${it.id}`}
-                      style={{ flex:1, minWidth:300 }}
+                      style={{ flex:1, minWidth:0 }}
                     />
                     <Button
                       type="primary"
@@ -1030,13 +1199,14 @@ export function QADashboard({ token, username }: { token: string; username: stri
                         ⚗️ คำนวณ Std ใหม่
                       </Button>
                     </Tooltip>
-                  </div>
+                  </div>}
                 </div>
               )
             })}
           </div>
         )}
       </Card>
+      </>}
     </Space>
   )
 }

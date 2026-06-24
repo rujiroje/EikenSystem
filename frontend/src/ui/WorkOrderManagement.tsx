@@ -56,6 +56,7 @@ type WorkOrder = {
   closedBy?: string
   reworkSourceWo?: { workOrderId: number; lotNo: string; product: Product }
   reworkReason?: string
+  targetTubes?: number
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -188,6 +189,7 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
       customStd2: wo.customStd2,
       reworkSourceWoId: wo.reworkSourceWo?.workOrderId ?? undefined,
       reworkReason: wo.reworkReason ?? undefined,
+      targetTubes: wo.targetTubes ?? undefined,
     })
     // ตรวจ availability ตามวันที่ปัจจุบันของ WO (exclude ตัวเอง)
     if (wo.startDate && wo.endDate) checkAvailability(wo.startDate, wo.endDate)
@@ -286,6 +288,10 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
       },
     },
     { title: 'Lot No.', dataIndex: 'lotNo' },
+    {
+      title: 'Target (หลอด)', dataIndex: 'targetTubes', width: 110,
+      render: (v: number) => v ? <Tag color="geekblue">{v.toLocaleString()}</Tag> : <span style={{ color: '#bbb' }}>-</span>
+    },
     {
       title: 'Rework',
       width: 110,
@@ -482,6 +488,7 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
         okText="บันทึก"
         cancelText="ยกเลิก"
         width={640}
+        style={{ maxWidth: '95vw' }}
         destroyOnClose
       >
         <Form form={form} layout="vertical" size="middle">
@@ -581,8 +588,13 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
             <Input placeholder="เช่น LOT-2025-001" />
           </Form.Item>
 
+          {/* ─── Target Tubes ─── */}
+          <Form.Item name="targetTubes" label="จำนวนหลอดเป้าหมาย" tooltip="ใช้คำนวณ Efficiency % และ Outer Target">
+            <InputNumber style={{ width: '100%' }} min={1} placeholder="เช่น 1000" />
+          </Form.Item>
+
           {/* ─── ขั้นที่ 4: เลือกวันก่อน → ระบบตรวจ Scale + M/C ว่าง ─── */}
-          <Space style={{ width: '100%' }}>
+          <Space style={{ width: '100%' }} wrap>
             <Form.Item name="startDate" label="วันเริ่มผลิต" style={{ flex: 1 }}>
               <DatePicker
                 style={{ width: '100%' }}
@@ -612,7 +624,7 @@ export function WorkOrderManagement({ token }: Readonly<{ token: string }>) {
           </Space>
 
           {/* ─── ขั้นที่ 5: Scale + M/C ที่ว่างในช่วงวันนั้น ─── */}
-          <Space style={{ width: '100%' }}>
+          <Space style={{ width: '100%' }} wrap>
             <Form.Item
               name="scaleId"
               label="เครื่องชั่ง (Scale)"
@@ -831,6 +843,7 @@ function MachineManagement({
         columns={machineColumns}
         pagination={false}
         size="small"
+        scroll={{ x: 700 }}
         rowClassName={(m: Machine) => m.isActive === false ? 'ant-table-row-disabled' : ''}
       />
 
@@ -842,6 +855,7 @@ function MachineManagement({
         okText="บันทึก"
         cancelText="ยกเลิก"
         confirmLoading={saving}
+        style={{ maxWidth: '95vw' }}
         destroyOnClose
       >
         <Form form={form} layout="vertical">

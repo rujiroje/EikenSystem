@@ -20,4 +20,9 @@ public class ChangeLog {
     private Instant createdAt = Instant.now();
     // Dedicated lotNo field for reliable querying (avoids LIKE on TEXT column)
     private String lotNo;
+    /** รหัสเหตุผลจาก sorting_reasons master */
+    private String reasonCode;
+    /** หมายเหตุเพิ่มเติม (กรณี requires_note=true) */
+    @Column(name = "reason_note", columnDefinition = "NVARCHAR(500)")
+    private String reasonNote;
 }

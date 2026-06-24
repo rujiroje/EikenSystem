@@ -2,6 +2,17 @@ import { useEffect, useRef, useState } from 'react'
 import { Card, Select, Table, Tag, Button, Modal, Input, InputNumber, Alert, Space, Typography, Tooltip } from 'antd'
 import { apiUrl } from '../api'
 
+type SortingReason = {
+  id: number
+  code: string
+  labelTh: string
+  labelEn: string
+  scope: string
+  sortOrder: number
+  requiresNote: boolean
+  isActive: boolean
+}
+
 type WorkOrder = {
   workOrderId: number
   product: { productCode: string; productName: string; weighingMode?: string }
@@ -139,6 +150,9 @@ export function SortingPage({ token, username }: Readonly<{ token: string; usern
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [histLoading, setHistLoading] = useState(false)
 
+  // Sorting reasons (dropdown)
+  const [sortingReasons, setSortingReasons] = useState<SortingReason[]>([])
+
   // Bulk move state (Case 1 ย้ายทั้ง Outer พร้อมกัน)
   const [bulkNewOuter, setBulkNewOuter] = useState<string>('')
   const [bulkReason, setBulkReason] = useState<string>('')
@@ -151,6 +165,14 @@ export function SortingPage({ token, username }: Readonly<{ token: string; usern
   const [scaleStep, setScaleStep] = useState(0) // DOUBLE: 0 = W1, 1 = W2
   const [scaleFocused, setScaleFocused] = useState(false)
   const scaleInputRef = useRef<any>(null)
+
+  // Load sorting reasons
+  useEffect(() => {
+    fetch(apiUrl('/api/sorting-reasons'), { headers })
+      .then(r => r.ok ? r.json() : [])
+      .then((list: SortingReason[]) => setSortingReasons(list.filter(r => r.isActive)))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Load SORTING WOs
   useEffect(() => {
@@ -351,7 +373,7 @@ export function SortingPage({ token, username }: Readonly<{ token: string; usern
         <div>
           <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Work Order (SORTING)</div>
           <Select
-            showSearch style={{ minWidth: 340 }} placeholder="เลือก WO ที่ต้องการ Sorting"
+            showSearch style={{ width: '100%', maxWidth: 400 }} placeholder="เลือก WO ที่ต้องการ Sorting"
             value={selectedWo?.workOrderId ?? undefined}
             loading={loading}
             onChange={selectWo}
@@ -365,7 +387,7 @@ export function SortingPage({ token, username }: Readonly<{ token: string; usern
         {selectedWo && (
           <div>
             <div style={{ fontSize: 12, color: '#888', marginBottom: 4 }}>Case</div>
-            <Select style={{ minWidth: 360 }} placeholder="เลือก Case การแก้ไข"
+            <Select style={{ width: '100%', maxWidth: 420 }} placeholder="เลือก Case การแก้ไข"
               value={selectedCase || undefined}
               onChange={v => { setSelectedCase(v); setSuccessMsg(null); setEditError(null) }}
               options={CASES.map(c => ({ value: c.key, label: c.label }))}
@@ -410,7 +432,16 @@ export function SortingPage({ token, username }: Readonly<{ token: string; usern
             </div>
             <div>
               <div style={{ fontSize: 12, marginBottom: 4 }}>เหตุผล <span style={{ color: 'red' }}>*</span></div>
-              <Input value={bulkReason} onChange={e => setBulkReason(e.target.value)} style={{ width: 280 }} placeholder="เหตุผลที่ย้าย Outer" />
+              <Select
+                value={bulkReason || undefined}
+                onChange={v => setBulkReason(v)}
+                placeholder="เลือกเหตุผล..."
+                style={{ width: 280 }}
+                options={sortingReasons
+                  .filter(r => r.scope === 'BOTH' || r.scope === 'BULK')
+                  .sort((a, b) => a.sortOrder - b.sortOrder)
+                  .map(r => ({ value: r.labelTh, label: `${r.labelTh}${r.labelEn ? ` (${r.labelEn})` : ''}` }))}
+              />
             </div>
             <div style={{ marginTop: 20 }}>
               <Button type="primary" loading={bulkSaving} onClick={saveBulk} disabled={!bulkNewOuter.trim() || !bulkReason.trim()}>
@@ -490,6 +521,7 @@ export function SortingPage({ token, username }: Readonly<{ token: string; usern
         confirmLoading={saving}
         title={modalTitle}
         width={480}
+        style={{ maxWidth: '95vw' }}
       >
         {editRow && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -663,9 +695,16 @@ export function SortingPage({ token, username }: Readonly<{ token: string; usern
 
             <div>
               <div style={{ marginBottom: 4 }}>เหตุผล <span style={{ color: 'red' }}>*</span></div>
-              <Input.TextArea rows={2} value={reason}
-                onChange={e => { setReason(e.target.value); setEditError(null) }}
-                placeholder="ระบุเหตุผลในการแก้ไข..." />
+              <Select
+                value={reason || undefined}
+                onChange={v => { setReason(v); setEditError(null) }}
+                placeholder="เลือกเหตุผล..."
+                style={{ width: '100%' }}
+                options={sortingReasons
+                  .filter(r => r.scope === 'BOTH' || r.scope === 'SINGLE')
+                  .sort((a, b) => a.sortOrder - b.sortOrder)
+                  .map(r => ({ value: r.labelTh, label: `${r.labelTh}${r.labelEn ? ` (${r.labelEn})` : ''}` }))}
+              />
             </div>
             {editError && <Alert type="error" message={editError} showIcon />}
           </div>

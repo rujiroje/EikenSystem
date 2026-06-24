@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Card, Space, Select, Input, Button, Tag, Alert, Typography, Tooltip, Modal } from 'antd'
+import { Card, Space, Select, Input, Button, Tag, Alert, Typography, Tooltip, Modal, Progress } from 'antd'
 import { apiUrl } from '../api'
 
 type User = { username: string; role: string; token?: string }
@@ -23,6 +23,7 @@ type Product = {
   tolerance1?: number
   tolerance2?: number
   cleanerTime?: number | null
+  outerApproverRole?: string
 }
 
 type Scale = {
@@ -34,6 +35,7 @@ type WorkOrder = {
   workOrderId: number
   product: Product
   scale: Scale
+  machine?: { machineId: string; machineName?: string }
   line?: string
   lotNo: string
   startDate?: string
@@ -45,6 +47,7 @@ type WorkOrder = {
   createdBy: string
   createdAt?: string
   operatorNames?: string
+  targetTubes?: number
 }
 
 type SavedMeasurement = {
@@ -78,6 +81,8 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
   const [proposedStd1Display, setProposedStd1Display] = useState<number | null>(null) // DOUBLE: proposed std #1
   const [proposedStd2Display, setProposedStd2Display] = useState<number | null>(null) // DOUBLE: proposed std #2
   const [qaApprovalId, setQaApprovalId] = useState<number | null>(null)
+  const [outerApproveModal, setOuterApproveModal] = useState<{ completedOuter: string; nextOuter: string; innerMax: number } | null>(null)
+  const [outerApproveLoading, setOuterApproveLoading] = useState(false)
   const [yellowLockedAwaitQA, setYellowLockedAwaitQA] = useState<boolean>(false) // ล็อกรอ QA อนุญาตให้ชั่งต่อ 4-5
   const [lockedForInitialStd, setLockedForInitialStd] = useState<boolean>(false) // ล็อกเพราะครบ Initial Std threshold
   const [initialStdThreshold, setInitialStdThreshold] = useState<number>(10) // จำนวน Inner ต่อ Outer (จาก product)
@@ -560,10 +565,18 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
           setWeight(0)
           setCapTime('')
           setCapDate('')
-          setInfoMessage(`🟢 Leader/QA อนุมัติแล้ว: ปลดล็อกและพร้อมชั่งซ้ำที่กล่อง Outer ${redOuter} Inner ${redInner}`)
           allowRepeatAfterRedRef.current = true
           if (inputRef.current) inputRef.current.focus()
           setLeaderApprovalId(null)
+          // ── Recalc Std mode: QA อนุมัติพร้อมคำนวณ Std ใหม่ ──────────────────
+          if (a.recalcStdMode) {
+            setRecalcStdMode(true)
+            setRecalcSampleCount(0)
+            setRecalcCurrentAvg(0)
+            setInfoMessage(`⚗️ QA อนุมัติคำนวณ Std ใหม่: ชั่งซ้ำกล่อง Outer ${redOuter} Inner ${redInner} เป็น Sample #1`)
+          } else {
+            setInfoMessage(`🟢 Leader/QA อนุมัติแล้ว: ปลดล็อกและพร้อมชั่งซ้ำที่กล่อง Outer ${redOuter} Inner ${redInner}`)
+          }
         }
       } catch {}
     }, 5000)
@@ -718,6 +731,7 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
         setRecalcCurrentAvg(avg)
         setStatus('')
         setWeight(0); setWeight1(null); setWeight2(null)
+        allowRepeatAfterRedRef.current = false  // Sample #1 เสร็จ → กล่องถัดไปใช้ saveMeasurement
         if (saved.recalcComplete) {
           // ครบ 10 กล่อง → ล็อกรอ QA อนุมัติ Std ใหม่
           hardLockRef.current = true
@@ -1118,9 +1132,17 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
             setRecalcCurrentAvg(avg)
             hardLockRef.current = false
             setLocked(false)
-            allowRepeatAfterRedRef.current = true // ชั่งซ้ำกล่องเดิมได้
-            if (data.nextOuterBoxNumber) setOuterBox(data.nextOuterBoxNumber)
-            if (data.nextInnerBoxOrder)  setInnerOrder(data.nextInnerBoxOrder)
+            if (cnt === 0) {
+              // ยังไม่มีตัวอย่าง → ต้องชั่งซ้ำกล่อง RED เดิม (reweigh)
+              allowRepeatAfterRedRef.current = true
+              if (data.outerBoxNumber) setOuterBox(String(data.outerBoxNumber).padStart(3, '0'))
+              if (data.innerBoxOrder)  setInnerOrder(String(data.innerBoxOrder).padStart(4, '0'))
+            } else {
+              // มีตัวอย่างแล้ว → ชั่งกล่องถัดไปด้วย saveMeasurement
+              allowRepeatAfterRedRef.current = false
+              if (data.nextOuterBoxNumber) setOuterBox(data.nextOuterBoxNumber)
+              if (data.nextInnerBoxOrder)  setInnerOrder(data.nextInnerBoxOrder)
+            }
             setInfoMessage(`⚗️ โหมดเก็บตัวอย่าง Std ใหม่: ${cnt}/10 กล่อง | Std ≈ ${avg > 0 ? avg.toFixed(3) : '?'}`)
             return
           } else {
@@ -1295,28 +1317,38 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
     }
 
     if (isFull) {
-      // Trigger QA Outer Inspection for the completed outer box
       const completedOuter = outerBox
-      if (selected && scaleId && lotNo) {
-        fetch(apiUrl('/api/approvals/outer-inspection'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-          body: JSON.stringify({
-            productCode: selected.productCode,
-            scaleId,
-            lotNo,
-            outerBox: completedOuter,
-            workOrderId: workOrder?.workOrderId ?? null,
-          }),
-        }).catch(() => { /* ignore network errors */ })
-      }
-      setOuterBox(prev => String((parseInt(prev, 10) || 0) + 1).padStart(3, '0'))
+      const nextOuter = String((parseInt(outerBox, 10) || 0) + 1).padStart(3, '0')
+      setOuterBox(nextOuter)
       if (selected?.innerNumberingMode === 'RESET_PER_OUTER') {
         setInnerOrder('0001')
       } else {
         setInnerOrder(String(cur + 1).padStart(4, '0'))
       }
-      setInfoMessage(`ครบจำนวน ${max} ชิ้น: เริ่มกล่องนอกใหม่ — ส่งคำขอ QA ตรวจสอบ Outer ${completedOuter} แล้ว`)
+      const approverRole = selected?.outerApproverRole ?? 'OPERATOR'
+      if (approverRole === 'OPERATOR') {
+        // Operator self-check → แสดง popup ให้ Operator กด Approve
+        setOuterApproveModal({ completedOuter, nextOuter, innerMax: max })
+      } else {
+        // QA หรือ LEADER เป็นคนอนุมัติ → ส่ง API โดยตรง ไม่ต้องให้ Operator กด
+        if (selected && scaleId && lotNo) {
+          fetch(apiUrl('/api/approvals/outer-inspection'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+            body: JSON.stringify({
+              productCode: selected.productCode,
+              scaleId,
+              lotNo,
+              outerBox: completedOuter,
+              workOrderId: workOrder?.workOrderId ?? null,
+            }),
+          })
+            .then(r => r.ok ? r.json() : null)
+            .then(() => setInfoMessage(`ครบ Outer ${completedOuter} — ส่งให้ ${approverRole} อนุมัติแล้ว → เริ่ม Outer ${nextOuter}`))
+            .catch(() => {})
+        }
+        setInfoMessage(`ครบ Outer ${completedOuter} — รอ ${approverRole} อนุมัติ → เริ่ม Outer ${nextOuter}`)
+      }
     } else {
       setInnerOrder(String(cur + 1).padStart(4, '0'))
     }
@@ -1324,6 +1356,37 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
     redAutoSavedRef.current = false
     setRedAutoSaved(false)
   }
+  const submitOuterApproval = async () => {
+    if (!outerApproveModal || !selected || !scaleId || !lotNo) return
+    setOuterApproveLoading(true)
+    try {
+      const r = await fetch(apiUrl('/api/approvals/outer-inspection'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+        body: JSON.stringify({
+          productCode: selected.productCode,
+          scaleId,
+          lotNo,
+          outerBox: outerApproveModal.completedOuter,
+          workOrderId: workOrder?.workOrderId ?? null,
+        }),
+      })
+      const data = r.ok ? await r.json().catch(() => null) : null
+      if (data?.selfChecked) {
+        setInfoMessage(`✓ Outer ${outerApproveModal.completedOuter} อนุมัติแล้ว — เริ่ม Outer ${outerApproveModal.nextOuter}`)
+      } else if (data?.id) {
+        setInfoMessage(`✓ Outer ${outerApproveModal.completedOuter} ส่งให้ QA/LD ตรวจสอบแล้ว — เริ่ม Outer ${outerApproveModal.nextOuter}`)
+      } else {
+        setInfoMessage(`Outer ${outerApproveModal.completedOuter} — เริ่ม Outer ${outerApproveModal.nextOuter}`)
+      }
+    } catch {
+      setInfoMessage(`Outer ${outerApproveModal.completedOuter} — เริ่ม Outer ${outerApproveModal.nextOuter}`)
+    } finally {
+      setOuterApproveLoading(false)
+      setOuterApproveModal(null)
+    }
+  }
+
   const decInner = () => {
     const curInner = parseInt(innerOrder, 10) || 1
     const candidate = Math.max(1, curInner - 1)
@@ -1419,12 +1482,16 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
       setCapDate(useDate!)
       setCaptureInfo(nt && nd ? 'รับค่าจากเครื่องชั่งครบถ้วน (OK)' : 'เวลา/วันที่ไม่ครบ: ใช้เวลาปัจจุบันเป็นค่าเริ่มต้น')
       // อัตโนมัติ: ตรวจสอบสถานะทันทีเมื่อได้รับน้ำหนัก และบันทึกทันทีโดยอ้างอิงสถานะที่คำนวณได้ (ไม่รอ state)
-      if (!locked) {
+      // recalcStdMode: อนุญาตแม้ locked=true (ระบบ unlock แล้วด้วย hardLockRef แต่ state อาจ stale)
+      if (!locked || (recalcStdMode && !hardLockRef.current)) {
         classifyWeight(w)
         const sNow = computeStatus(w)
         if ((autoSaveGY || collectingForStd) && (sNow === 'GREEN' || sNow === 'YELLOW') && Number.isFinite(w) && w > 0) {
           // บันทึกทันทีด้วยค่าน้ำหนักที่อ่านได้ (หลีกเลี่ยง state ยังเป็น 0)
           submitWithWeight(w, sNow)
+        } else if (recalcStdMode && recalcSampleCount < 10 && !hardLockRef.current && Number.isFinite(w) && w > 0) {
+          // Recalc mode: auto-save ทุกกล่อง ไม่เทียบ Std เดิม
+          submitWithWeight(w, 'RECALC_SAMPLE')
         }
       }
       // โฟกัสปุ่มประมวลผลเล็กน้อยให้ทำงานต่อได้ไว (ถ้าต้องการสามารถกด Enter ต่อได้)
@@ -1467,18 +1534,29 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
         if (data && data.nextOuterBoxNumber && data.nextInnerBoxOrder) {
           // ตรวจว่า outer เปลี่ยน → outer เดิมครบแล้ว → ส่งคำขอ QA ตรวจสอบ Outer
           if (data.nextOuterBoxNumber !== outerBeforeRefresh) {
-            fetch(apiUrl('/api/approvals/outer-inspection'), {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
-              body: JSON.stringify({
-                productCode: selected.productCode,
-                scaleId,
-                lotNo,
-                outerBox: outerBeforeRefresh,
-                workOrderId: workOrder?.workOrderId ?? null,
-              }),
-            }).catch(() => {})
-            setInfoMessage(`ครบ Outer ${outerBeforeRefresh}: เริ่ม Outer ${data.nextOuterBoxNumber} — ส่งคำขอ QA ตรวจสอบแล้ว`)
+            const approverRole = selected?.outerApproverRole ?? 'OPERATOR'
+            if (approverRole === 'OPERATOR') {
+              setOuterApproveModal({
+                completedOuter: outerBeforeRefresh,
+                nextOuter: data.nextOuterBoxNumber,
+                innerMax: selected?.innerBoxQuantity ?? 0,
+              })
+            } else {
+              fetch(apiUrl('/api/approvals/outer-inspection'), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+                body: JSON.stringify({
+                  productCode: selected.productCode,
+                  scaleId,
+                  lotNo,
+                  outerBox: outerBeforeRefresh,
+                  workOrderId: workOrder?.workOrderId ?? null,
+                }),
+              })
+                .then(r => r.ok ? r.json() : null)
+                .then(() => setInfoMessage(`ครบ Outer ${outerBeforeRefresh} — ส่งให้ ${approverRole} อนุมัติแล้ว → เริ่ม Outer ${data.nextOuterBoxNumber}`))
+                .catch(() => setInfoMessage(`ครบ Outer ${outerBeforeRefresh} → เริ่ม Outer ${data.nextOuterBoxNumber}`))
+            }
           } else {
             setInfoMessage(`รีเฟรชข้อมูลล่าสุดสำเร็จ (Outer ${data.nextOuterBoxNumber}, Inner ${data.nextInnerBoxOrder})`)
           }
@@ -1667,6 +1745,48 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
         </Space>
       </Modal>
 
+      {/* Modal อนุมัติ Outer Inspection โดย OPERATOR */}
+      <Modal
+        open={!!outerApproveModal}
+        closable={false}
+        maskClosable={false}
+        footer={null}
+        centered
+        width={420}
+        style={{ maxWidth: '95vw' }}
+      >
+        {outerApproveModal && (
+          <div style={{ textAlign: 'center', padding: '8px 4px 4px' }}>
+            <div style={{ fontSize: 56, lineHeight: 1, marginBottom: 12 }}>📦</div>
+            <Typography.Title level={3} style={{ margin: '0 0 4px' }}>
+              Outer {outerApproveModal.completedOuter} ครบแล้ว
+            </Typography.Title>
+            {outerApproveModal.innerMax > 0 && (
+              <Typography.Text type="secondary" style={{ fontSize: 14 }}>
+                ชั่งครบ {outerApproveModal.innerMax} ชิ้นในกล่องนอก {outerApproveModal.completedOuter}
+              </Typography.Text>
+            )}
+            <div style={{ margin: '12px 0' }}>
+              <Tag color="blue" style={{ fontSize: 13, padding: '4px 12px' }}>
+                ถัดไป → Outer {outerApproveModal.nextOuter}
+              </Tag>
+            </div>
+            <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '10px 16px', marginBottom: 20, fontSize: 13, color: '#7c5800' }}>
+              กรุณาตรวจสอบความถูกต้องก่อนกด <b>อนุมัติ</b>
+            </div>
+            <Button
+              type="primary"
+              size="large"
+              loading={outerApproveLoading}
+              onClick={submitOuterApproval}
+              style={{ width: '100%', height: 56, fontSize: 20, fontWeight: 700, background: '#52c41a', borderColor: '#52c41a' }}
+            >
+              ✓ อนุมัติ Outer {outerApproveModal.completedOuter}
+            </Button>
+          </div>
+        )}
+      </Modal>
+
       {/* ── Work Order Card (เลือก WO ก่อนชั่ง / แสดง WO info ระหว่างชั่ง) ── */}
       <Card
         size="small"
@@ -1722,7 +1842,7 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
           <>
             <Space wrap>
               <Select
-                style={{ minWidth: 380 }}
+                style={{ width: '100%', maxWidth: 500 }}
                 placeholder="เลือก Work Order (ACTIVE)"
                 value={workOrder?.workOrderId ?? undefined}
                 onChange={(id: number) => {
@@ -1735,17 +1855,21 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
                     setLotNo(wo.lotNo ?? '')
                   }
                 }}
+                showSearch
+                filterOption={(input, option) =>
+                  String(option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                }
                 allowClear
                 onClear={() => { setWorkOrder(null); setSelected(null); setScaleId(''); setLotNo('') }}
                 options={workOrders.map(wo => ({
                   value: wo.workOrderId,
-                  label: `WO#${wo.workOrderId} — ${wo.product?.productCode} | Lot: ${wo.lotNo}${wo.line ? ' | ' + wo.line : ''}`,
+                  label: `Machine: ${wo.machine?.machineName ?? wo.scale?.scaleName ?? wo.scale?.scaleId ?? '-'} | Product: ${wo.product?.productCode ?? '-'} | Lot: ${wo.lotNo}`,
                 }))}
               />
               {workOrder && (
                 <>
                   <Input
-                    style={{ width: 260 }}
+                    style={{ width: '100%', maxWidth: 300 }}
                     placeholder="ชื่อผู้ร่วมทำงาน (เช่น สมชาย, สมหญิง)"
                     value={operatorNamesInput}
                     onChange={e => setOperatorNamesInput(e.target.value)}
@@ -1890,6 +2014,49 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
                     <div style={{ fontSize: 28, fontWeight: 800, color: '#6d28d9', fontVariantNumeric: 'tabular-nums', lineHeight: 1.2 }}>{innerOrder}</div>
                   </div>
                   <Button type="primary" size="small" onClick={handleOpenEditBoxModal} disabled={status === 'RED'}>แก้ไข</Button>
+                  {/* Outer Actual / Target — circular progress in cyan, right side of same row */}
+                  {(() => {
+                    const innerPerOuter = selected?.innerBoxQuantity ?? 0
+                    const qpm = selected?.quantityPerMeasurement ?? 0
+                    const targetTubes = workOrder?.targetTubes
+                    const outerTarget = (targetTubes && innerPerOuter > 0 && qpm > 0)
+                      ? Math.ceil(targetTubes / (innerPerOuter * qpm))
+                      : null
+                    const innerByOuter = new Map<string, Set<string>>()
+                    for (const m of measurementHistory) {
+                      if (m.outer === '000') continue
+                      if (!/^\d+$/.test(m.inner.trim())) continue
+                      if (!innerByOuter.has(m.outer)) innerByOuter.set(m.outer, new Set())
+                      innerByOuter.get(m.outer)!.add(m.inner)
+                    }
+                    const outerActual = innerPerOuter > 0
+                      ? Array.from(innerByOuter.values()).filter(s => s.size >= innerPerOuter).length
+                      : 0
+                    if (!outerTarget && outerActual === 0) return null
+                    const pctNum = outerTarget ? Math.min(Math.round((outerActual / outerTarget) * 100), 100) : 0
+                    const actualStr = String(outerActual).padStart(3, '0')
+                    const targetStr = outerTarget ? String(outerTarget).padStart(3, '0') : '???'
+                    return (
+                      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Progress
+                          type="circle"
+                          percent={pctNum}
+                          size={60}
+                          strokeColor="#06b6d4"
+                          trailColor="#e0f7fa"
+                          format={p => (
+                            <span style={{ fontSize: 12, fontWeight: 800, color: '#0e7490' }}>{p}%</span>
+                          )}
+                        />
+                        <div style={{ display: 'flex', flexDirection: 'column' }}>
+                          <span style={{ fontSize: 10, fontWeight: 600, color: '#0891b2' }}>ความคืบหน้า Outer</span>
+                          <span style={{ fontSize: 16, fontWeight: 800, color: '#0891b2', fontVariantNumeric: 'tabular-nums' }}>
+                            {actualStr}&nbsp;/&nbsp;{targetStr}
+                          </span>
+                        </div>
+                      </div>
+                    )
+                  })()}
                 </div>
                 {/* Yellow streak progress */}
                 {consecutiveYellow > 0 && !yellowLockedAwaitQA && (
@@ -1957,7 +2124,7 @@ export function MeasurementEntry({ currentUser }: Readonly<{ currentUser: User }
             )}
 
             {/* Scale Capture */}
-            <div style={{ flexShrink: 0, width: 360 }}>
+            <div style={{ flexShrink: 0, width: 'min(360px, 100%)' }}>
               {scaleCaptureCard}
             </div>
 

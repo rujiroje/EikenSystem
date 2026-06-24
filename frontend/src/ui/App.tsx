@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { MeasurementEntry } from './MeasurementEntry'
 import { LoginWithKiosk as Login } from './LoginWithKiosk'
 import { AdminData } from './AdminData'
-import { Layout, Menu, Button, Typography, Space, Tag, Badge, Modal, notification, Form, Input, Tabs, Alert, Spin } from 'antd'
-import { DashboardOutlined, DeploymentUnitOutlined, LogoutOutlined, SettingOutlined, WechatWorkOutlined, OrderedListOutlined, SyncOutlined, FileTextOutlined, KeyOutlined, ScanOutlined, CheckCircleOutlined, WarningOutlined, MobileOutlined } from '@ant-design/icons'
+import { Layout, Menu, Button, Typography, Space, Tag, Badge, Modal, notification, Form, Input, Tabs, Alert, Spin, Grid, Drawer } from 'antd'
+import { DashboardOutlined, DeploymentUnitOutlined, LogoutOutlined, SettingOutlined, WechatWorkOutlined, OrderedListOutlined, SyncOutlined, FileTextOutlined, KeyOutlined, ScanOutlined, CheckCircleOutlined, WarningOutlined, MobileOutlined, MenuOutlined } from '@ant-design/icons'
 import { QADashboard } from './QADashboard'
 import { LeaderDashboard } from './LeaderDashboard'
 import { WorkOrderManagement } from './WorkOrderManagement'
@@ -38,6 +38,9 @@ export function App() {
   }, [])
 
   const { Header, Content, Footer } = Layout
+  const screens = Grid.useBreakpoint()
+  const isMobile = !screens.md  // true on xs / sm (< 768 px)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const [active, setActive] = useState<string>('home')
   const [leaderPending, setLeaderPending] = useState<number>(0)
   const [qaCounts, setQaCounts] = useState<{readyForApplyCount:number;outerInspectionCount:number;redEventsCount:number;total:number}>({readyForApplyCount:0,outerInspectionCount:0,redEventsCount:0,total:0})
@@ -253,16 +256,22 @@ export function App() {
   // ─── Menu items ───────────────────────────────────────────────────────────
   const menuItems = useMemo(() => {
     const items: any[] = []
+    const isMgmt = !!user?.roles?.includes('MANAGEMENT')
     if (user?.roles?.includes('OPERATOR')) items.push({ key: 'weigh', icon: <DeploymentUnitOutlined />, label: 'ชั่งน้ำหนัก' })
     if (user?.roles?.includes('OPERATOR')) items.push({ key: 'sorting', icon: <SyncOutlined />, label: 'Sorting' })
-    if (user?.roles?.includes('QA')) items.push({ key: 'qa', icon: <DashboardOutlined />, label: (
-      <span>QA Dashboard{qaTotal>0 && <Badge count={qaTotal} style={{ marginLeft: 8, backgroundColor: '#d4380d' }} />}</span>
-    ) })
-    if (user?.roles?.includes('LEADER')) items.push({ key: 'leader', icon: <DashboardOutlined />, label: (
-      <span>Leader{leaderPending>0 && <Badge count={leaderPending} style={{ marginLeft: 8 }} />}</span>
-    ) })
-    if (user?.roles?.includes('LEADER')) items.push({ key: 'wo', icon: <OrderedListOutlined />, label: 'Work Order' })
-    if (user?.roles?.includes('LEADER') || user?.roles?.includes('QA')) items.push({ key: 'report', icon: <FileTextOutlined />, label: 'รายงาน WO' })
+    if (isMgmt) {
+      items.push({ key: 'qa', icon: <DashboardOutlined />, label: 'Dashboard' })
+      items.push({ key: 'report', icon: <FileTextOutlined />, label: 'รายงาน WO' })
+    } else {
+      if (user?.roles?.includes('QA')) items.push({ key: 'qa', icon: <DashboardOutlined />, label: (
+        <span>QA Dashboard{qaTotal>0 && <Badge count={qaTotal} style={{ marginLeft: 8, backgroundColor: '#d4380d' }} />}</span>
+      ) })
+      if (user?.roles?.includes('LEADER')) items.push({ key: 'leader', icon: <DashboardOutlined />, label: (
+        <span>Leader{leaderPending>0 && <Badge count={leaderPending} style={{ marginLeft: 8 }} />}</span>
+      ) })
+      if (user?.roles?.includes('LEADER')) items.push({ key: 'wo', icon: <OrderedListOutlined />, label: 'Work Order' })
+      if (user?.roles?.includes('LEADER') || user?.roles?.includes('QA')) items.push({ key: 'report', icon: <FileTextOutlined />, label: 'รายงาน WO' })
+    }
     if (user?.roles?.includes('DATA_ADMIN') || user?.roles?.includes('ADMIN')) items.push({ key: 'admin', icon: <SettingOutlined />, label: 'Admin: Master Data' })
     return items
   }, [user, leaderPending, qaTotal])
@@ -319,28 +328,32 @@ export function App() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Space align="center">
+      <Header style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: isMobile ? '0 12px' : '0 24px', gap: 8 }}>
+        <Space align="center" size={8}>
+          {isMobile && user && menuItems.length > 1 && (
+            <Button type="text" icon={<MenuOutlined />} onClick={() => setDrawerOpen(true)} style={{ color: '#fff', fontSize: 18 }} />
+          )}
           <WechatWorkOutlined style={{ color: '#fff', fontSize: 18 }} />
-          <Typography.Title level={4} style={{ color: '#fff', margin: 0 }}>Eikensystem</Typography.Title>
+          {!isMobile && <Typography.Title level={4} style={{ color: '#fff', margin: 0 }}>Eikensystem</Typography.Title>}
+          {isMobile && <Typography.Title level={5} style={{ color: '#fff', margin: 0 }}>Eikensystem</Typography.Title>}
         </Space>
-        <Space>
+        <Space size={4}>
           {user && (
             <>
-              <Tag color="blue">{user.username}</Tag>
+              <Tag color="blue" style={{ maxWidth: isMobile ? 80 : undefined, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.username}</Tag>
               <Button type="text" icon={<KeyOutlined />} onClick={() => { setAcctOpen(true); setAcctTab('fingerprint'); setFpStatus('idle'); setFpMessage('') }} style={{ color: '#fff' }} title="จัดการบัญชี" />
-              <Button type="text" icon={<LogoutOutlined />} onClick={doLogout} style={{ color: '#fff' }}>Logout</Button>
+              <Button type="text" icon={<LogoutOutlined />} onClick={doLogout} style={{ color: '#fff' }}>{isMobile ? null : 'Logout'}</Button>
             </>
           )}
         </Space>
       </Header>
-      <Content style={{ padding: 16 }}>
+      <Content style={{ padding: isMobile ? 8 : 16, minWidth: 0, overflow: 'auto' }}>
         <ErrorBoundary>
           {!user ? (
             <Login onLoggedIn={setUser} />
           ) : (
-            <div style={{ display: 'grid', gap: 16 }}>
-              {menuItems.length > 0 && (
+            <div style={{ display: 'grid', gap: 12 }}>
+              {menuItems.length > 0 && !isMobile && (
                 <Menu mode="horizontal" selectedKeys={[active]} onClick={(e) => setActive(e.key)} items={menuItems} />
               )}
               {user.roles?.includes('OPERATOR') && (active === 'weigh' || (menuItems.length === 1 && !user.roles?.includes('LEADER'))) && (
@@ -353,14 +366,14 @@ export function App() {
                   <SortingPage token={user.token} username={user.username} />
                 </ErrorBoundary>
               )}
-              {user.roles?.includes('QA') && active === 'qa' && (
+              {(user.roles?.includes('QA') || user.roles?.includes('MANAGEMENT')) && active === 'qa' && (
                 <ErrorBoundary pageName="QA Dashboard">
-                  <QADashboard token={user.token} username={user.username} />
+                  <QADashboard token={user.token} username={user.username} readOnly={!user.roles?.includes('QA')} />
                 </ErrorBoundary>
               )}
-              {user.roles?.includes('LEADER') && active === 'leader' && (
+              {(user.roles?.includes('LEADER') || user.roles?.includes('MANAGEMENT')) && active === 'leader' && (
                 <ErrorBoundary pageName="Leader Dashboard">
-                  <LeaderDashboard token={user.token} username={user.username} onHandled={() => setLeaderPending(c => Math.max(0, c-1))} />
+                  <LeaderDashboard token={user.token} username={user.username} onHandled={() => setLeaderPending(c => Math.max(0, c-1))} readOnly={!user.roles?.includes('LEADER')} />
                 </ErrorBoundary>
               )}
               {user.roles?.includes('LEADER') && active === 'wo' && (
@@ -368,7 +381,7 @@ export function App() {
                   <WorkOrderManagement token={user.token} />
                 </ErrorBoundary>
               )}
-              {(user.roles?.includes('LEADER') || user.roles?.includes('QA')) && active === 'report' && (
+              {(user.roles?.includes('LEADER') || user.roles?.includes('QA') || user.roles?.includes('MANAGEMENT')) && active === 'report' && (
                 <ErrorBoundary pageName="รายงาน WO">
                   <WOReportPage token={user.token} />
                 </ErrorBoundary>
@@ -382,7 +395,25 @@ export function App() {
           )}
         </ErrorBoundary>
       </Content>
-      <Footer style={{ textAlign: 'center', color: '#999' }}>© {new Date().getFullYear()} Eikensystem v2.0</Footer>
+      <Footer style={{ textAlign: 'center', color: '#999', fontSize: isMobile ? 11 : 14 }}>© {new Date().getFullYear()} Eikensystem v2.0</Footer>
+
+      {/* Mobile navigation drawer */}
+      <Drawer
+        title="เมนู"
+        placement="left"
+        open={drawerOpen}
+        onClose={() => setDrawerOpen(false)}
+        width={240}
+        styles={{ body: { padding: 0 } }}
+      >
+        <Menu
+          mode="inline"
+          selectedKeys={[active]}
+          onClick={(e) => { setActive(e.key); setDrawerOpen(false) }}
+          items={menuItems}
+          style={{ borderRight: 0, height: '100%' }}
+        />
+      </Drawer>
 
       <Modal
         title={<span><KeyOutlined style={{ marginRight: 8 }} />จัดการบัญชี</span>}
@@ -395,6 +426,7 @@ export function App() {
         cancelText="ยกเลิก"
         destroyOnClose
         width={480}
+        style={{ maxWidth: '95vw' }}
       >
         <Tabs activeKey={acctTab} onChange={k => { setAcctTab(k); setFpStatus('idle'); setFpMessage('') }} items={[
           {

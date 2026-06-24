@@ -480,12 +480,14 @@ public class ReportController {
             // Pending approval counts for this scale
             List<com.example.eikensystem.domain.Approval> scaleApprovals =
                     pendingByScale.getOrDefault(s.getScaleId(), List.of());
-            int pendingRed       = (int) scaleApprovals.stream().filter(a -> "RED_EVENT".equals(a.getType())).count();
-            int pendingCleaning  = (int) scaleApprovals.stream().filter(a -> "CLEANING_CHECK".equals(a.getType())).count();
-            int pendingOuter     = (int) scaleApprovals.stream().filter(a -> "OUTER_INSPECTION".equals(a.getType())).count();
+            int pendingRed        = (int) scaleApprovals.stream().filter(a -> "RED_EVENT".equals(a.getType())).count();
+            int pendingCleaning   = (int) scaleApprovals.stream().filter(a -> "CLEANING_CHECK".equals(a.getType())).count();
+            int pendingOuterLeader = (int) scaleApprovals.stream().filter(a -> "OUTER_INSPECTION".equals(a.getType()) && "LEADER".equals(a.getApproverRole())).count();
+            int pendingOuterQa    = (int) scaleApprovals.stream().filter(a -> "OUTER_INSPECTION".equals(a.getType()) && !"LEADER".equals(a.getApproverRole())).count();
+            int pendingOuter      = pendingOuterLeader + pendingOuterQa;
             // STD split by stage: LEADER_PENDING = waiting for Leader to approve; READY_FOR_APPLY = waiting for QA to apply
-            int pendingStdLeader = (int) scaleApprovals.stream().filter(a -> "STD_CHANGE_REQUEST".equals(a.getType()) && "LEADER_PENDING".equals(a.getStage())).count();
-            int pendingStd       = (int) scaleApprovals.stream().filter(a -> "STD_CHANGE_REQUEST".equals(a.getType()) && "READY_FOR_APPLY".equals(a.getStage())).count();
+            int pendingStdLeader  = (int) scaleApprovals.stream().filter(a -> "STD_CHANGE_REQUEST".equals(a.getType()) && "LEADER_PENDING".equals(a.getStage())).count();
+            int pendingStd        = (int) scaleApprovals.stream().filter(a -> "STD_CHANGE_REQUEST".equals(a.getType()) && "READY_FOR_APPLY".equals(a.getStage())).count();
             map.put("pendingRed",       pendingRed);
             map.put("pendingCleaning",  pendingCleaning);
             map.put("pendingOuter",     pendingOuter);
@@ -511,14 +513,12 @@ public class ReportController {
                     if ("YELLOW".equalsIgnoreCase(x.getStatus())) consec++;
                 }
                 map.put("consecutiveYellow", consec);
-                // needsQa: only QA-actionable items (Outer inspection + READY_FOR_APPLY Std + streak/RED status)
-                map.put("needsQa",     consec >= 5 || "RED".equalsIgnoreCase(m.getStatus()) || pendingOuter > 0 || pendingStd > 0);
-                // needsLeader: Leader-actionable items (RED events, cleaning checks, LEADER_PENDING Std)
-                map.put("needsLeader", pendingRed > 0 || pendingCleaning > 0 || pendingStdLeader > 0);
+                map.put("needsQa",     consec >= 5 || "RED".equalsIgnoreCase(m.getStatus()) || pendingOuterQa > 0 || pendingStd > 0);
+                map.put("needsLeader", pendingRed > 0 || pendingCleaning > 0 || pendingStdLeader > 0 || pendingOuterLeader > 0);
             } else {
                 map.put("consecutiveYellow", 0);
-                map.put("needsQa",     pendingOuter > 0 || pendingStd > 0);
-                map.put("needsLeader", pendingRed > 0 || pendingCleaning > 0 || pendingStdLeader > 0);
+                map.put("needsQa",     pendingOuterQa > 0 || pendingStd > 0);
+                map.put("needsLeader", pendingRed > 0 || pendingCleaning > 0 || pendingStdLeader > 0 || pendingOuterLeader > 0);
             }
             result.add(map);
         }
@@ -526,7 +526,7 @@ public class ReportController {
     }
 
     @GetMapping("/machine-status")
-    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('QA', 'LEADER', 'ADMIN')")
+    @org.springframework.security.access.prepost.PreAuthorize("hasAnyRole('QA', 'LEADER', 'ADMIN', 'MANAGEMENT')")
     public List<Map<String, Object>> getMachineStatus() {
         List<com.example.eikensystem.domain.Machine> machines = machineRepo.findAllOrdered();
 
@@ -577,16 +577,24 @@ public class ReportController {
 
                 List<com.example.eikensystem.domain.Approval> scaleApprovals =
                         pendingByScale.getOrDefault(scaleId, List.of());
-                int pendingRed       = (int) scaleApprovals.stream().filter(a -> "RED_EVENT".equals(a.getType())).count();
-                int pendingCleaning  = (int) scaleApprovals.stream().filter(a -> "CLEANING_CHECK".equals(a.getType())).count();
-                int pendingOuter     = (int) scaleApprovals.stream().filter(a -> "OUTER_INSPECTION".equals(a.getType())).count();
-                int pendingStdLeader = (int) scaleApprovals.stream().filter(a -> "STD_CHANGE_REQUEST".equals(a.getType()) && "LEADER_PENDING".equals(a.getStage())).count();
-                int pendingStd       = (int) scaleApprovals.stream().filter(a -> "STD_CHANGE_REQUEST".equals(a.getType()) && "READY_FOR_APPLY".equals(a.getStage())).count();
+                int pendingRed         = (int) scaleApprovals.stream().filter(a -> "RED_EVENT".equals(a.getType())).count();
+                int pendingCleaning    = (int) scaleApprovals.stream().filter(a -> "CLEANING_CHECK".equals(a.getType())).count();
+                int pendingOuterLeader = (int) scaleApprovals.stream().filter(a -> "OUTER_INSPECTION".equals(a.getType()) && "LEADER".equals(a.getApproverRole())).count();
+                int pendingOuterQa     = (int) scaleApprovals.stream().filter(a -> "OUTER_INSPECTION".equals(a.getType()) && !"LEADER".equals(a.getApproverRole())).count();
+                int pendingOuter       = pendingOuterLeader + pendingOuterQa;
+                int pendingStdLeader   = (int) scaleApprovals.stream().filter(a -> "STD_CHANGE_REQUEST".equals(a.getType()) && "LEADER_PENDING".equals(a.getStage())).count();
+                int pendingStd         = (int) scaleApprovals.stream().filter(a -> "STD_CHANGE_REQUEST".equals(a.getType()) && "READY_FOR_APPLY".equals(a.getStage())).count();
                 map.put("pendingRed",       pendingRed);
                 map.put("pendingCleaning",  pendingCleaning);
                 map.put("pendingOuter",     pendingOuter);
                 map.put("pendingStdLeader", pendingStdLeader);
                 map.put("pendingStd",       pendingStd);
+
+                // targetTubes + quantityPerMeasurement — available from WO/Product regardless of active state
+                map.put("targetTubes", wo.getTargetTubes());
+                int qpm = (wo.getProduct() != null && wo.getProduct().getQuantityPerMeasurement() != null)
+                        ? wo.getProduct().getQuantityPerMeasurement() : 0;
+                map.put("quantityPerMeasurement", qpm);
 
                 if (active) {
                     Measurement m  = real.get(0);
@@ -606,12 +614,41 @@ public class ReportController {
                         if ("YELLOW".equalsIgnoreCase(x.getStatus())) consec++;
                     }
                     map.put("consecutiveYellow", consec);
-                    map.put("needsQa",     consec >= 5 || "RED".equalsIgnoreCase(m.getStatus()) || pendingOuter > 0 || pendingStd > 0);
-                    map.put("needsLeader", pendingRed > 0 || pendingCleaning > 0 || pendingStdLeader > 0);
+                    map.put("needsQa",     consec >= 5 || "RED".equalsIgnoreCase(m.getStatus()) || pendingOuterQa > 0 || pendingStd > 0);
+                    map.put("needsLeader", pendingRed > 0 || pendingCleaning > 0 || pendingStdLeader > 0 || pendingOuterLeader > 0);
+
+                    // Measurement count (distinct outer/inner) + status breakdown
+                    String pc = m.getProduct() != null ? m.getProduct().getProductCode() : null;
+                    if (pc != null && lotNo != null) {
+                        Long distinctCount = measurementRepo.countDistinctOuterInner(pc, scaleId, lotNo);
+                        map.put("measurementCount", distinctCount != null ? distinctCount : 0L);
+
+                        List<Object[]> statusRows = measurementRepo.countStatusByWo(pc, scaleId, lotNo);
+                        long gc = 0, yc = 0, rc = 0;
+                        for (Object[] row : statusRows) {
+                            String s = (String) row[0];
+                            long cnt = row[1] instanceof Number ? ((Number) row[1]).longValue() : 0L;
+                            if ("GREEN".equals(s)) gc = cnt;
+                            else if ("YELLOW".equals(s)) yc = cnt;
+                            else if ("RED".equals(s)) rc = cnt;
+                        }
+                        map.put("greenCount",  gc);
+                        map.put("yellowCount", yc);
+                        map.put("redCount",    rc);
+                    } else {
+                        map.put("measurementCount", 0L);
+                        map.put("greenCount",  0L);
+                        map.put("yellowCount", 0L);
+                        map.put("redCount",    0L);
+                    }
                 } else {
                     map.put("consecutiveYellow", 0);
-                    map.put("needsQa",     pendingOuter > 0 || pendingStd > 0);
-                    map.put("needsLeader", pendingRed > 0 || pendingCleaning > 0 || pendingStdLeader > 0);
+                    map.put("needsQa",     pendingOuterQa > 0 || pendingStd > 0);
+                    map.put("needsLeader", pendingRed > 0 || pendingCleaning > 0 || pendingStdLeader > 0 || pendingOuterLeader > 0);
+                    map.put("measurementCount", 0L);
+                    map.put("greenCount",  0L);
+                    map.put("yellowCount", 0L);
+                    map.put("redCount",    0L);
                 }
             } else {
                 map.put("active", false);
@@ -620,6 +657,9 @@ public class ReportController {
                 map.put("pendingRed", 0); map.put("pendingCleaning", 0); map.put("pendingOuter", 0);
                 map.put("pendingStdLeader", 0); map.put("pendingStd", 0);
                 map.put("needsQa", false); map.put("needsLeader", false);
+                map.put("targetTubes", null); map.put("quantityPerMeasurement", 0);
+                map.put("measurementCount", 0L);
+                map.put("greenCount", 0L); map.put("yellowCount", 0L); map.put("redCount", 0L);
             }
             result.add(map);
         }

@@ -5,5 +5,6 @@ public enum Role {
     LEADER,
     QA,
     ADMIN,
-    DATA_ADMIN
+    DATA_ADMIN,
+    MANAGEMENT
 }

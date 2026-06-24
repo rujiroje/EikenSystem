@@ -1,11 +1,13 @@
 package com.example.eikensystem.web;
 
 import com.example.eikensystem.domain.Approval;
+import com.example.eikensystem.domain.OuterInspection;
 import com.example.eikensystem.domain.Product;
 import com.example.eikensystem.domain.Measurement;
 import com.example.eikensystem.domain.StandardWeightLog;
 import com.example.eikensystem.domain.Scale;
 import com.example.eikensystem.repo.ApprovalRepo;
+import com.example.eikensystem.repo.OuterInspectionRepo;
 import com.example.eikensystem.repo.ProductRepo;
 import com.example.eikensystem.repo.StandardWeightLogRepo;
 import com.example.eikensystem.repo.MeasurementRepo;
@@ -32,6 +34,7 @@ public class ApprovalController {
     private final StandardWeightLogRepo stdLogRepo;
     private final MeasurementRepo measurementRepo;
     private final com.example.eikensystem.repo.ScaleRepo scaleRepo;
+    private final OuterInspectionRepo outerInspectionRepo;
 
     private static final String ROLE_LEADER = "LEADER";
     private static final String ROLE_QA = "QA";
@@ -43,7 +46,7 @@ public class ApprovalController {
     private static final String TYPE_OUTER = "OUTER_INSPECTION";
     private static final String STAGE_REQUESTED = "REQUESTED";
     private static final String STAGE_READY = "READY_FOR_APPLY";
-    private static final List<String> LEADER_TYPES = List.of(TYPE_RED_EVENT, TYPE_CLEANING);
+    private static final List<String> LEADER_TYPES = List.of(TYPE_RED_EVENT, TYPE_CLEANING, TYPE_OUTER);
 
     @GetMapping
     @PreAuthorize("hasAnyRole('QA','LEADER','ADMIN')")
@@ -51,7 +54,7 @@ public class ApprovalController {
 
     // Leader pending: RED_EVENT + CLEANING_CHECK
     @GetMapping("/leader-pending")
-    @PreAuthorize("hasRole('LEADER')")
+    @PreAuthorize("hasAnyRole('LEADER', 'MANAGEMENT')")
     public List<Approval> listLeaderPending(@RequestParam(name = "withPayloadOnly", defaultValue = "true") boolean withPayloadOnly) {
         List<Approval> list = approvalRepo.findByApproverRoleAndStatusAndTypeIn(ROLE_LEADER, STATUS_PENDING, LEADER_TYPES);
         // fallback: ถ้าไม่มีข้อมูลใหม่และ withPayloadOnly=true ให้ดึง RED_EVENT เก่าด้วย
@@ -63,7 +66,7 @@ public class ApprovalController {
 
     // Lightweight counter for navbar badge (RED + CLEANING)
     @GetMapping("/leader-pending/count")
-    @PreAuthorize("hasRole('LEADER')")
+    @PreAuthorize("hasAnyRole('LEADER', 'MANAGEMENT')")
     public Map<String, Object> countLeaderPending(@RequestParam(name = "withPayloadOnly", defaultValue = "true") boolean withPayloadOnly) {
         long c = approvalRepo.countByApproverRoleAndStatusAndTypeIn(ROLE_LEADER, STATUS_PENDING, LEADER_TYPES);
         if (c == 0 && withPayloadOnly) {
@@ -74,7 +77,7 @@ public class ApprovalController {
 
     // QA view for RED events (which are assigned to LEADER but QA can intervene)
     @GetMapping("/qa-red-pending")
-    @PreAuthorize("hasRole('QA')")
+    @PreAuthorize("hasAnyRole('QA', 'MANAGEMENT')")
     public List<Approval> listQaRedPending() {
         return approvalRepo.findByApproverRoleAndStatusAndTypeOrderByRequestedAtDesc(ROLE_LEADER, STATUS_PENDING, TYPE_RED_EVENT);
     }
@@ -142,20 +145,38 @@ public class ApprovalController {
 
     @PostMapping("/{id}/approve")
     @PreAuthorize("hasAnyRole('QA','LEADER','ADMIN')")
-    public ResponseEntity<Approval> approve(@PathVariable Long id) {
+    public ResponseEntity<?> approve(@PathVariable Long id, org.springframework.security.core.Authentication auth) {
         if (id == null) return ResponseEntity.badRequest().build();
-        return approvalRepo.findById(id)
-                .map(a -> { a.setStatus(STATUS_APPROVED); return ResponseEntity.ok(approvalRepo.save(a)); })
-                .orElseGet(() -> ResponseEntity.notFound().build());
+        Approval a = approvalRepo.findById(id).orElse(null);
+        if (a == null) return ResponseEntity.notFound().build();
+        // RED Event: เฉพาะ QA/ADMIN เท่านั้นที่ปลดล็อคได้
+        if (TYPE_RED_EVENT.equals(a.getType())) {
+            boolean isQaOrAdmin = auth.getAuthorities().stream()
+                .anyMatch(x -> x.getAuthority().equals("ROLE_QA") || x.getAuthority().equals("ROLE_ADMIN"));
+            if (!isQaOrAdmin) {
+                return ResponseEntity.status(403).body(Map.of("error", "Only QA can unlock RED events"));
+            }
+        }
+        a.setStatus(STATUS_APPROVED);
+        return ResponseEntity.ok(approvalRepo.save(a));
     }
 
     @PostMapping("/{id}/reject")
     @PreAuthorize("hasAnyRole('QA','LEADER','ADMIN')")
-    public ResponseEntity<Approval> reject(@PathVariable Long id) {
+    public ResponseEntity<?> reject(@PathVariable Long id, org.springframework.security.core.Authentication auth) {
         if (id == null) return ResponseEntity.badRequest().build();
-        return approvalRepo.findById(id)
-                .map(a -> { a.setStatus("REJECTED"); return ResponseEntity.ok(approvalRepo.save(a)); })
-                .orElseGet(() -> ResponseEntity.notFound().build());
+        Approval a = approvalRepo.findById(id).orElse(null);
+        if (a == null) return ResponseEntity.notFound().build();
+        // RED Event: เฉพาะ QA/ADMIN เท่านั้นที่ reject ได้
+        if (TYPE_RED_EVENT.equals(a.getType())) {
+            boolean isQaOrAdmin = auth.getAuthorities().stream()
+                .anyMatch(x -> x.getAuthority().equals("ROLE_QA") || x.getAuthority().equals("ROLE_ADMIN"));
+            if (!isQaOrAdmin) {
+                return ResponseEntity.status(403).body(Map.of("error", "Only QA can reject RED events"));
+            }
+        }
+        a.setStatus("REJECTED");
+        return ResponseEntity.ok(approvalRepo.save(a));
     }
 
     /**
@@ -165,7 +186,7 @@ public class ApprovalController {
      * ③ Insert RECALC_START barrier → reset consecutiveYellow เป็น 0 อัตโนมัติ
      */
     @PostMapping("/{id}/approve-recalc-std")
-    @PreAuthorize("hasAnyRole('QA','LEADER','ADMIN')")
+    @PreAuthorize("hasAnyRole('QA','ADMIN')")
     public ResponseEntity<?> approveRecalcStd(@PathVariable Long id, @RequestBody ApproveWithNote req) {
         if (id == null) return ResponseEntity.badRequest().build();
         Approval ap = approvalRepo.findById(id).orElse(null);
@@ -294,7 +315,7 @@ public class ApprovalController {
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }
 
-    // QA applies a new standard: updates product.standardWeight and logs the change
+    // QA applies a new standard: บันทึกลง StandardWeightLog + Barrier Measurement (ไม่แก้ตาราง Product)
     @PostMapping("/{id}/apply-std")
     @PreAuthorize("hasRole('QA')")
     public ResponseEntity<?> applyStd(@PathVariable Long id, @RequestBody ApplyStdRequest req) {
@@ -321,26 +342,8 @@ public class ApprovalController {
             if (latestLog.getNewStd1() != null) oldStd1 = latestLog.getNewStd1();
             if (latestLog.getNewStd2() != null) oldStd2 = latestLog.getNewStd2();
         }
-        // Update Product master data with new Std and derived values
-        if (req.getNewStd() != null) {
-            double newStdVal = req.getNewStd();
-            double wpp = p.getWeightPerPiece() != null ? p.getWeightPerPiece() : 0.0;
-            p.setStandardWeight(newStdVal);
-            // Use QA-verified values if provided, otherwise compute from formula
-            p.setMinWeight(req.getNewMin() != null ? req.getNewMin() : newStdVal - wpp / 2.0);
-            p.setMaxWeight(req.getNewMax() != null ? req.getNewMax() : newStdVal + wpp / 2.0);
-            // Derive tolerance from QA-supplied DMin/DMax, or formula
-            if (req.getNewDMin() != null) {
-                p.setTolerance(newStdVal - req.getNewDMin());
-            } else if (req.getNewDMax() != null) {
-                p.setTolerance(req.getNewDMax() - newStdVal);
-            } else {
-                p.setTolerance(wpp / 4.0);
-            }
-        }
-        if (req.getNewStd1() != null) p.setStandardWeight1(req.getNewStd1());
-        if (req.getNewStd2() != null) p.setStandardWeight2(req.getNewStd2());
-        productRepo.save(p);
+        // Std ใหม่บันทึกผ่าน StandardWeightLog + Barrier Measurement เท่านั้น
+        // ห้าม update ตาราง Product เพื่อไม่ให้กระทบข้อมูลมาตรฐานที่ Admin กำหนดไว้
 
         StandardWeightLog log = new StandardWeightLog();
         log.setProductCode(p.getProductCode());
@@ -432,7 +435,13 @@ public class ApprovalController {
         // แนวทาง: สร้าง measurement barrier (GREEN) ที่มี timestamp ล่าสุด เพื่อ 'ตัด' streak ของ YELLOW
         createBarrierMeasurement(ap, p, req.getNewStd(), req.getNewStd1(), req.getNewStd2(), req.getApprovedBy());
 
-        return ResponseEntity.ok(p);
+        Map<String, Object> result = new HashMap<>();
+        result.put("applied", true);
+        result.put("productCode", p.getProductCode());
+        if (req.getNewStd()  != null) result.put("newStd",  req.getNewStd());
+        if (req.getNewStd1() != null) result.put("newStd1", req.getNewStd1());
+        if (req.getNewStd2() != null) result.put("newStd2", req.getNewStd2());
+        return ResponseEntity.ok(result);
     }
 
     private void createBarrierMeasurement(Approval ap, Product p, Double newStd, Double newStd1, Double newStd2, String operatorName) {
@@ -621,7 +630,7 @@ public class ApprovalController {
 
     // ---- QA Pending Counts & Lists ----
     @GetMapping("/qa-pending-count")
-    @PreAuthorize("hasRole('QA')")
+    @PreAuthorize("hasAnyRole('QA', 'MANAGEMENT')")
     public Map<String, Object> qaPendingCount() {
         long readyForApply = approvalRepo.countByApproverRoleAndStatusAndTypeAndStage(ROLE_QA, STATUS_PENDING, TYPE_STD_CHANGE, STAGE_READY);
         long outerInspection = approvalRepo.countByApproverRoleAndStatusAndType(ROLE_QA, STATUS_PENDING, TYPE_OUTER);
@@ -635,7 +644,7 @@ public class ApprovalController {
     }
 
     @GetMapping("/qa-pending")
-    @PreAuthorize("hasRole('QA')")
+    @PreAuthorize("hasAnyRole('QA', 'MANAGEMENT')")
     public List<Approval> qaPending(@RequestParam(name = "stage", required = false) String stage) {
         List<Approval> result;
         if (stage != null && !stage.isBlank()) {
@@ -700,7 +709,10 @@ public class ApprovalController {
 
     /**
      * OP creates OUTER_INSPECTION request when an outer box is completed.
-     * targetId = "productCode:scaleId:lotNo:outerBox" for dedup.
+     * Branches based on Product.outerApproverRole:
+     *   QA       → create Approval (approverRole=QA) — default
+     *   OPERATOR → auto-approve: save OuterInspection directly, return {selfChecked: true}
+     *   LEADER   → create Approval (approverRole=LEADER)
      */
     @PostMapping("/outer-inspection")
     @PreAuthorize("hasAnyRole('OPERATOR','ADMIN')")
@@ -712,27 +724,65 @@ public class ApprovalController {
 
         String targetId = req.getProductCode() + ":" + req.getScaleId() + ":" + req.getLotNo() + ":" + req.getOuterBox();
 
+        // ดึง Product เพื่อดู outerApproverRole
+        Product product = productRepo.findById(req.getProductCode()).orElse(null);
+        String approverRole = (product != null && product.getOuterApproverRole() != null)
+                ? product.getOuterApproverRole().toUpperCase()
+                : ROLE_QA;
+        String approverNote = (product != null) ? product.getOuterApproverNote() : null;
+
+        // OPERATOR self-check: สร้าง OuterInspection ทันที ไม่สร้าง Approval
+        if ("OPERATOR".equals(approverRole)) {
+            OuterInspection oi = new OuterInspection();
+            oi.setProductCode(req.getProductCode());
+            oi.setScaleId(req.getScaleId());
+            oi.setLotNo(req.getLotNo());
+            oi.setOuterBox(req.getOuterBox());
+            oi.setWorkOrderId(req.getWorkOrderId());
+            oi.setInspectorRole("OPERATOR");
+            oi.setInspectorUser(auth.getName());
+            oi.setInspectedAt(Instant.now());
+            oi.setStatus("AUTO_APPROVED");
+            oi.setApproverNote(approverNote);
+            oi.setCreatedAt(Instant.now());
+            outerInspectionRepo.save(oi);
+            return ResponseEntity.ok(Map.of(
+                "selfChecked", true,
+                "outerBox", req.getOuterBox(),
+                "note", approverNote != null ? approverNote : ""
+            ));
+        }
+
+        // QA หรือ LEADER: สร้าง Approval ปกติ
+        String effectiveApproverRole = "LEADER".equals(approverRole) ? ROLE_LEADER : ROLE_QA;
+
         // Dedup: ถ้ามี PENDING อยู่แล้ว คืน record เดิม
-        List<Approval> existing = approvalRepo.findByApproverRoleAndStatusAndTypeOrderByRequestedAtDesc(ROLE_QA, STATUS_PENDING, TYPE_OUTER);
+        List<Approval> existing = approvalRepo.findByApproverRoleAndStatusAndTypeOrderByRequestedAtDesc(effectiveApproverRole, STATUS_PENDING, TYPE_OUTER);
         for (Approval a : existing) {
             if (targetId.equals(a.getTargetId())) return ResponseEntity.ok(a);
         }
 
-        String payload = String.format(
-            "{\"productCode\":\"%s\",\"scaleId\":\"%s\",\"lotNo\":\"%s\",\"outerBox\":\"%s\",\"workOrderId\":%s}",
-            req.getProductCode(), req.getScaleId(), req.getLotNo(), req.getOuterBox(),
-            req.getWorkOrderId() != null ? req.getWorkOrderId() : "null"
-        );
+        Map<String, Object> payloadMap = new HashMap<>();
+        payloadMap.put("productCode", req.getProductCode());
+        payloadMap.put("scaleId",     req.getScaleId());
+        payloadMap.put("lotNo",       req.getLotNo());
+        payloadMap.put("outerBox",    req.getOuterBox());
+        payloadMap.put("workOrderId", req.getWorkOrderId());
+        if (approverNote != null) payloadMap.put("approverNote", approverNote);
+        String payload;
+        try { payload = new ObjectMapper().writeValueAsString(payloadMap); }
+        catch (Exception ex) { payload = "{}"; }
 
         Approval a = new Approval();
         a.setType(TYPE_OUTER);
-        a.setApproverRole(ROLE_QA);
+        a.setApproverRole(effectiveApproverRole);
         a.setStatus(STATUS_PENDING);
         a.setStage(STAGE_REQUESTED);
         a.setTargetId(targetId);
         a.setRequestedBy(auth.getName());
         a.setRequestedAt(Instant.now());
         a.setPayloadJson(payload);
+        if (approverNote != null) a.setNote(approverNote);
         return ResponseEntity.ok(approvalRepo.save(a));
     }
 
@@ -741,7 +791,7 @@ public class ApprovalController {
      * QA fetches all pending OUTER_INSPECTION approvals.
      */
     @GetMapping("/outer-inspection/pending")
-    @PreAuthorize("hasRole('QA')")
+    @PreAuthorize("hasAnyRole('QA', 'MANAGEMENT')")
     public List<Approval> outerInspectionPending() {
         return approvalRepo.findByApproverRoleAndStatusAndTypeOrderByRequestedAtDesc(ROLE_QA, STATUS_PENDING, TYPE_OUTER);
     }
@@ -751,7 +801,7 @@ public class ApprovalController {
      * QA approves outer inspection (1-click, optional note).
      */
     @PostMapping("/{id}/approve-outer")
-    @PreAuthorize("hasRole('QA')")
+    @PreAuthorize("hasAnyRole('QA', 'LEADER')")
     public ResponseEntity<Approval> approveOuter(@PathVariable Long id,
                                                   @RequestBody(required = false) ApproveWithNote req) {
         if (id == null) return ResponseEntity.badRequest().build();

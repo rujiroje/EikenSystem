@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Card, Table, Tag, Space, Button, Modal, Input, message, Alert, Tooltip, Statistic, Select, Switch, Typography, InputNumber } from 'antd'
+import { Card, Table, Tag, Space, Button, Modal, Input, message, Alert, Tooltip, Statistic, Select, Switch, Typography, InputNumber, Progress } from 'antd'
 import { LineChart, Line, XAxis, YAxis, Tooltip as RTooltip, CartesianGrid, ResponsiveContainer, Legend, ReferenceLine } from 'recharts'
 import { apiUrl } from '../api'
 
@@ -39,6 +39,12 @@ type MachineStatus = {
   pendingStdLeader: number
   needsQa: boolean
   needsLeader: boolean
+  measurementCount?: number
+  targetTubes?: number
+  quantityPerMeasurement?: number
+  greenCount?: number
+  yellowCount?: number
+  redCount?: number
 }
 
 function getStatusColor(status: string) {
@@ -51,7 +57,7 @@ function getStatusColor(status: string) {
   return 'default';
 }
 
-export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token: string; username: string; onHandled: () => void }>) {
+export function LeaderDashboard({ token, username, onHandled, readOnly = false }: Readonly<{ token: string; username: string; onHandled: () => void; readOnly?: boolean }>) {
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [error, setError] = useState<string>('')
   const [selected, setSelected] = useState<Approval | null>(null)
@@ -338,18 +344,20 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
 
   const doApprove = async () => {
     if (!selected) return
-    if (!note.trim()) {
+    const isOuter = selected.type === 'OUTER_INSPECTION'
+    if (!isOuter && !note.trim()) {
       message.warning('กรุณาใส่เหตุผล/หมายเหตุ')
       return
     }
     try {
-      const r = await fetch(apiUrl(`/api/approvals/${selected.id}/approve-with-note`), {
+      const endpoint = isOuter ? `/api/approvals/${selected.id}/approve-outer` : `/api/approvals/${selected.id}/approve-with-note`
+      const r = await fetch(apiUrl(endpoint), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ actionBy: username, note })
+        body: JSON.stringify({ actionBy: username, note: note.trim() || undefined })
       })
       if (r.ok) {
-        message.success('อนุมัติ RED สำเร็จ')
+        message.success(isOuter ? 'อนุมัติ Outer สำเร็จ' : 'อนุมัติ RED สำเร็จ')
         setSelected(null)
         onHandled()
         fetchApprovals()
@@ -421,7 +429,14 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
       )
     }},
     { title: 'ดำเนินการ', width: 130, render: (_: any, row: Approval) => {
-      if (row.status !== 'PENDING' || row.approverRole !== 'LEADER') return null
+      if (row.status !== 'PENDING') return null
+      // RED Event: Leader ดูได้แต่ปลดล็อคไม่ได้ — รอ QA เท่านั้น
+      if (row.type === 'RED_EVENT') {
+        return <Tag color="orange">⏳ รอ QA ปลดล็อค</Tag>
+      }
+      // MANAGEMENT: read-only — ซ่อนปุ่มทั้งหมด
+      if (readOnly) return <Tag color="default">ดูเท่านั้น</Tag>
+      if (row.approverRole !== 'LEADER') return null
       if (row.type === 'CLEANING_CHECK') {
         const p = safePayload(row)
         return (
@@ -470,11 +485,23 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
       </div>
 
       {/* Summary widgets */}
-      <Space wrap style={{ marginBottom: 12 }}>
-        <Card size="small"><Statistic title="Pending" value={approvals.filter(a => a.status === 'PENDING').length} /></Card>
-        <Card size="small"><Statistic title="Approved (Today)" value={approvals.filter(a => a.status === 'APPROVED' && isToday(a.actionAt)).length} /></Card>
-        <Card size="small"><Statistic title="Total Items" value={approvals.length} /></Card>
-      </Space>
+      {(() => {
+        const totalActualTubes = machineStatuses.reduce((s, r) => s + (r.measurementCount ?? 0) * (r.quantityPerMeasurement ?? 0), 0)
+        const totalTargetTubes = machineStatuses.reduce((s, r) => s + (r.targetTubes ?? 0), 0)
+        const overallPct = totalTargetTubes > 0 ? Math.round((totalActualTubes / totalTargetTubes) * 100) : 0
+        return (
+          <Space wrap style={{ marginBottom: 12 }}>
+            <Card size="small"><Statistic title="Pending" value={approvals.filter(a => a.status === 'PENDING').length} /></Card>
+            <Card size="small"><Statistic title="Approved (Today)" value={approvals.filter(a => a.status === 'APPROVED' && isToday(a.actionAt)).length} /></Card>
+            <Card size="small"><Statistic title="Total Items" value={approvals.length} /></Card>
+            <Card size="small">
+              <Statistic title="ผลผลิตรวม" value={totalActualTubes.toLocaleString('th-TH')} suffix="หลอด"
+                valueStyle={{ color: totalTargetTubes > 0 && overallPct >= 90 ? '#52c41a' : '#faad14' }} />
+              {totalTargetTubes > 0 && <Typography.Text type="secondary" style={{ fontSize: 11 }}>เป้า {totalTargetTubes.toLocaleString('th-TH')} หลอด ({overallPct}%)</Typography.Text>}
+            </Card>
+          </Space>
+        )
+      })()}
 
       {/* Machine Status Table */}
       <Card size="small" title={
@@ -485,14 +512,15 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
             <Tag color="red">ต้องการ LD: {machineStatuses.filter(x => x.needsLeader).length}</Tag>
           )}
         </Space>
-      } style={{ marginBottom: 12 }}>
+      } style={{ marginBottom: 12 }} styles={{ body: { overflow: 'hidden' } }}>
         <Table
           dataSource={machineStatuses.map(x => ({ key: x.machineId, ...x }))}
           pagination={false}
           size="small"
+          scroll={{ x: '100%' }}
           columns={[
             {
-              title: 'Machine', key: 'machine',
+              title: 'Machine', key: 'machine', width: '13%',
               render: (_: any, r: MachineStatus) => {
                 const todayStr = new Date().toISOString().substring(0, 10)
                 const scheduledWos = ldWoList.filter((wo: any) =>
@@ -514,55 +542,13 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
               }
             },
             {
-              title: 'Scale', key: 'scale',
+              title: 'Scale', key: 'scale', width: '8%',
               render: (_: any, r: MachineStatus) => r.scaleId
                 ? <Tag>{r.scaleId}{r.scaleName ? ` - ${r.scaleName}` : ''}</Tag>
                 : <span style={{ color: '#bbb' }}>—</span>
             },
             {
-              title: 'WO วันนี้', key: 'scheduledWo',
-              render: (_: any, r: MachineStatus) => {
-                const todayStr = new Date().toISOString().substring(0, 10)
-                const scheduledWos = ldWoList.filter((wo: any) =>
-                  wo.status === 'ACTIVE' &&
-                  wo.machine?.machineId === r.machineId &&
-                  (wo.startDate == null || wo.startDate <= todayStr) &&
-                  (wo.endDate == null || wo.endDate >= todayStr)
-                )
-                if (scheduledWos.length === 0) return <span style={{ color: '#bbb' }}>—</span>
-                return (
-                  <Space direction="vertical" size={2}>
-                    {scheduledWos.map((wo: any) => {
-                      const isRunning = r.active && (r.workOrderId === wo.workOrderId || r.lastLotNo === wo.lotNo)
-                      return (
-                        <Tooltip
-                          key={wo.workOrderId}
-                          title={
-                            <span>
-                              Product: {wo.product?.productCode} — {wo.product?.productName}<br />
-                              Scale: {wo.scale?.scaleId}<br />
-                              วันผลิต: {wo.startDate ?? '∞'} → {wo.endDate ?? '∞'}<br />
-                              สร้างโดย: {wo.createdBy}<br />
-                              {wo.operatorNames && <>Operator: {wo.operatorNames}</>}
-                            </span>
-                          }
-                        >
-                          <Tag
-                            color={isRunning ? 'green' : 'orange'}
-                            style={{ cursor: 'default', fontSize: 11 }}
-                          >
-                            {isRunning ? '▶ ' : '⏸ '}WO #{wo.workOrderId} · {wo.lotNo}
-                            <span style={{ marginLeft: 4, opacity: 0.8 }}>[{wo.product?.productCode}]</span>
-                          </Tag>
-                        </Tooltip>
-                      )
-                    })}
-                  </Space>
-                )
-              }
-            },
-            {
-              title: 'Product / Lot', key: 'product',
+              title: 'Product / Lot', key: 'product', width: '10%',
               render: (_: any, r: MachineStatus) => r.active ? (
                 <span>
                   <b>{r.lastProductCode || '-'}</b>
@@ -571,7 +557,7 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
               ) : <span style={{ color: '#bbb' }}>—</span>
             },
             {
-              title: 'ตำแหน่งปัจจุบัน', key: 'pos',
+              title: 'ตำแหน่งปัจจุบัน', key: 'pos', width: '11%',
               render: (_: any, r: MachineStatus) => r.active ? (
                 <span style={{ fontFamily: 'monospace' }}>
                   Outer <b>{r.lastOuterBox || '-'}</b> / Inner <b>{r.lastInnerOrder || '-'}</b>
@@ -579,7 +565,37 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
               ) : <span style={{ color: '#bbb' }}>—</span>
             },
             {
-              title: 'สถานะล่าสุด', key: 'lastStatus',
+              title: 'จำนวนหลอด', key: 'totalTubes', width: '8%',
+              render: (_: any, r: MachineStatus) => {
+                if (!r.active) return <span style={{ color: '#bbb' }}>—</span>
+                const count = r.measurementCount ?? 0
+                const qpm   = r.quantityPerMeasurement ?? 0
+                if (!qpm) return <span style={{ color: '#bbb', fontSize: 11 }}>—</span>
+                return <b style={{ fontFamily: 'monospace' }}>{(count * qpm).toLocaleString('th-TH')}</b>
+              }
+            },
+            {
+              title: 'ประสิทธิภาพ', key: 'efficiency', width: '11%',
+              render: (_: any, r: MachineStatus) => {
+                if (!r.active) return <span style={{ color: '#bbb' }}>—</span>
+                const qpm    = r.quantityPerMeasurement ?? 0
+                const actual = (r.measurementCount ?? 0) * qpm
+                const target = r.targetTubes ?? 0
+                if (!target || !qpm) return <span style={{ color: '#bbb', fontSize: 11 }}>ไม่มี Target</span>
+                const pct   = Math.min(100, Math.round((actual / target) * 100))
+                const color = pct >= 100 ? '#52c41a' : pct >= 75 ? '#1677ff' : pct >= 50 ? '#faad14' : '#ff4d4f'
+                return (
+                  <div style={{ display:'flex', flexDirection:'column', gap:2 }}>
+                    <Progress percent={pct} size="small" strokeColor={color} format={p => `${p}%`} />
+                    <span style={{ fontSize:10, color:'#888', fontFamily:'monospace' }}>
+                      {actual.toLocaleString('th-TH')} / {target.toLocaleString('th-TH')}
+                    </span>
+                  </div>
+                )
+              }
+            },
+            {
+              title: 'สถานะล่าสุด', key: 'lastStatus', width: '7%',
               render: (_: any, r: MachineStatus) => {
                 if (!r.active) return <span style={{ color: '#bbb' }}>—</span>
                 const v = r.lastStatus
@@ -587,7 +603,7 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
               }
             },
             {
-              title: 'รายการรออนุมัติ', key: 'pending',
+              title: 'รออนุมัติ', key: 'pending', width: '14%',
               render: (_: any, r: MachineStatus) => {
                 const tags: any[] = []
                 if (r.pendingRed > 0)       tags.push(<Tag key="red"   color="red"       style={{ fontSize: 11 }}>🔴 RED ×{r.pendingRed}</Tag>)
@@ -599,7 +615,7 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
               }
             },
             {
-              title: 'YELLOW ต่อเนื่อง', dataIndex: 'consecutiveYellow',
+              title: 'YELLOW', dataIndex: 'consecutiveYellow', width: '9%',
               render: (v: number, r: MachineStatus) => {
                 if (!r.active) return <span style={{ color: '#bbb' }}>—</span>
                 return (
@@ -612,7 +628,7 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
               }
             },
             {
-              title: 'ต้องการดำเนินการ', key: 'needsAction',
+              title: 'ดำเนินการ', key: 'needsAction', width: '9%',
               render: (_: any, r: MachineStatus) => {
                 const todayStr = new Date().toISOString().substring(0, 10)
                 const scheduledWos = ldWoList.filter((wo: any) =>
@@ -646,9 +662,9 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
         footer={null}
       >
         <Space wrap style={{ marginBottom: 8 }}>
-          <Select showSearch style={{ minWidth: 220 }} placeholder="Product" value={selProduct || undefined}
+          <Select showSearch style={{ minWidth: 160, width: '100%', maxWidth: 300 }} placeholder="Product" value={selProduct || undefined}
                   onChange={setSelProduct} options={products.map((p:any)=>({ value:p.productCode, label:`${p.productCode} - ${p.productName||''}` }))} />
-          <Select showSearch style={{ minWidth: 180 }} placeholder="Scale" value={selScale || undefined}
+          <Select showSearch style={{ minWidth: 120, width: '100%', maxWidth: 200 }} placeholder="Scale" value={selScale || undefined}
                   onChange={setSelScale} options={scales.map((s:any)=>({ value:s.scaleId, label:s.scaleId }))} />
           <Button type="primary" loading={reportLoading} onClick={async ()=>{
             if (!selProduct || !selScale) { message.info('โปรดเลือก Product และ Scale'); return }
@@ -663,7 +679,7 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
           }}>โหลดรายงาน</Button>
         </Space>
         <Space wrap style={{ marginBottom: 8 }}>
-          <Select showSearch style={{ minWidth: 240 }} placeholder="เลือก Lot เพื่อดูรายงาน"
+          <Select showSearch style={{ minWidth: 160, width: '100%', maxWidth: 320 }} placeholder="เลือก Lot เพื่อดูรายงาน"
                   value={selLot || undefined}
                   onChange={async (lot)=>{
                     setSelLot(lot)
@@ -763,9 +779,9 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
                 const bgColor = outerColors[idx % outerColors.length]
                 
                 return (
-                  <div key={outer} style={{ 
+                  <div key={outer} style={{
                     width: 'calc(50% - 8px)',
-                    minWidth: 400,
+                    minWidth: 'min(400px, 100%)',
                     padding: 16, 
                     border: '3px solid #333', 
                     borderRadius: 12,
@@ -969,7 +985,7 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
       <Card size="small" title="Leader แก้ไข Inner / น้ำหนัก (เลือกจาก WO)" style={{ marginBottom: 12 }}>
         <Space wrap style={{ marginBottom: 8 }}>
           <Select
-            showSearch style={{ minWidth: 300 }} placeholder="เลือก Work Order"
+            showSearch style={{ minWidth: 200, width: '100%', maxWidth: 420 }} placeholder="เลือก Work Order"
             value={ldSelectedWo?.workOrderId ?? undefined}
             loading={ldLoading}
             onChange={ldSelectWo}
@@ -1164,7 +1180,7 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
         columns={columns as any}
         rowKey="id"
         pagination={{ pageSize: 8, hideOnSinglePage: true, position: ['bottomCenter'] }}
-        scroll={{ y: tableH }}
+        scroll={{ x: 900, y: tableH }}
         tableLayout="fixed"
         expandable={{
           expandRowByClick: true,
@@ -1200,9 +1216,9 @@ export function LeaderDashboard({ token, username, onHandled }: Readonly<{ token
         onOk={doApprove}
         okText="อนุมัติ"
         cancelText="ยกเลิก"
-        title={selected ? `อนุมัติ RED ID ${selected.id}` : ''}
+        title={selected ? `อนุมัติ ${selected.type === 'OUTER_INSPECTION' ? 'Outer' : 'RED'} ID ${selected.id}` : ''}
       >
-        <p>ระบุเหตุผล / หมายเหตุเพิ่มเติม:</p>
+        <p>{selected?.type === 'OUTER_INSPECTION' ? 'หมายเหตุเพิ่มเติม (ไม่บังคับ):' : 'ระบุเหตุผล / หมายเหตุเพิ่มเติม:'}</p>
         <Input.TextArea rows={4} value={note} onChange={e => setNote(e.target.value)} />
       </Modal>
     </Card>

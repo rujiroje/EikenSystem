@@ -70,4 +70,17 @@ public interface MeasurementRepo extends JpaRepository<Measurement, Long> {
 		@org.springframework.data.repository.query.Param("pc") String pc,
 		@org.springframework.data.repository.query.Param("si") String si,
 		@org.springframework.data.repository.query.Param("lo") String lo);
+
+	// Count distinct (outer, inner) pairs — for tube count calculation (excludes barrier records)
+	@org.springframework.data.jpa.repository.Query(value =
+		"SELECT COUNT(DISTINCT outer_box_number + '|' + inner_box_order) " +
+		"FROM measurement " +
+		"WHERE product_code = :pc AND scale_id = :si AND lot_no = :lo " +
+		"AND COALESCE(is_for_standard_adjustment, 0) = 0 " +
+		"AND outer_box_number <> '000'",
+		nativeQuery = true)
+	Long countDistinctOuterInner(
+		@org.springframework.data.repository.query.Param("pc") String pc,
+		@org.springframework.data.repository.query.Param("si") String si,
+		@org.springframework.data.repository.query.Param("lo") String lo);
 }

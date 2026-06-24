@@ -107,4 +107,7 @@ public class WorkOrder {
     /** เหตุผลที่ต้อง Rework */
     @Column(columnDefinition = "TEXT")
     private String reworkReason;
+
+    /** จำนวนหลอดเป้าหมาย (สำหรับคำนวณ Efficiency %) */
+    private Integer targetTubes;
 }

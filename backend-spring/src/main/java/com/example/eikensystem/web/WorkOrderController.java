@@ -123,6 +123,7 @@ public class WorkOrderController {
         wo.setCustomStd2(req.getCustomStd2());
         wo.setReworkSourceWo(reworkSource);
         wo.setReworkReason(req.getReworkReason());
+        wo.setTargetTubes(req.getTargetTubes());
         wo.setStatus("ACTIVE");
         wo.setCreatedBy(auth.getName());
         wo.setCreatedAt(LocalDateTime.now());
@@ -193,6 +194,7 @@ public class WorkOrderController {
             }
         }
         if (req.getReworkReason() != null) wo.setReworkReason(req.getReworkReason());
+        if (req.getTargetTubes() != null) wo.setTargetTubes(req.getTargetTubes());
 
         return ResponseEntity.ok(workOrderRepo.save(wo));
     }
@@ -395,6 +397,8 @@ public class WorkOrderController {
         private Long reworkSourceWoId;
         /** เหตุผลที่ต้อง Rework */
         private String reworkReason;
+        /** จำนวนหลอดเป้าหมาย */
+        private Integer targetTubes;
     }
 
     @Data

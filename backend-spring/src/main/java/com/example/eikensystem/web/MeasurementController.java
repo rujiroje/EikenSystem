@@ -205,7 +205,10 @@ public class MeasurementController {
 
         List<Measurement> lotHistory = measurementRepo.findTop100ByProduct_ProductCodeAndLotNoOrderByTimestampDesc(productCode, lotNo);
         List<Measurement> validBoxes = lotHistory.stream()
-                .filter(x -> !Boolean.TRUE.equals(x.getIsForStandardAdjustment()) && !"000".equals(x.getOuterBoxNumber()) && !"RST1".equals(x.getInnerBoxOrder()))
+                .filter(x -> !Boolean.TRUE.equals(x.getIsForStandardAdjustment())
+                          && !"000".equals(x.getOuterBoxNumber())
+                          && !"RST1".equals(x.getInnerBoxOrder())
+                          && !"RECALC_SAMPLE".equals(x.getStatus())) // ไม่นับ RECALC_SAMPLE — เพื่อป้องกัน false Initial Std trigger
                 .toList();
 
         long count = validBoxes.size();
@@ -308,9 +311,7 @@ public class MeasurementController {
             rm.setInnerBoxOrder(req.getInnerOrder());
             rm.setWeight(w);
             rm.setWeight1(req.getWeight1()); rm.setWeight2(req.getWeight2());
-            rm.setTimestamp(req.getTimestamp() != null
-                    ? req.getTimestamp().atZone(java.time.ZoneId.systemDefault()).toLocalDateTime()
-                    : LocalDateTime.now());
+            rm.setTimestamp(LocalDateTime.now()); // ใช้ server time เพื่อให้ ordering หลัง RECALC_START เสมอ
             rm.setOperatorName(req.getOperatorName());
             rm.setStatus("RECALC_SAMPLE");
             rm.setNote(req.getNote());
@@ -344,16 +345,35 @@ public class MeasurementController {
                 stdPayload.put("lotNo", req.getLotNo().trim());
                 stdPayload.put("proposedStd", newAvg);
                 stdPayload.put("recalcFromRed", true);
-                // รวบรวม weights ของ 10 กล่อง (ASC) เพื่อให้ QA ดู
-                List<Double> allW = earlyHistory.stream()
-                        .filter(x -> "RECALC_SAMPLE".equals(x.getStatus()) && x.getWeight() != null)
-                        .sorted(java.util.Comparator.comparing(Measurement::getTimestamp))
-                        .map(Measurement::getWeight)
+                // รวบรวม weights เฉพาะ session ปัจจุบัน (bilateral filter เหมือน computeRecalcState)
+                int barrierIdx2 = -1;
+                for (int ii = 0; ii < earlyHistory.size(); ii++) {
+                    Measurement xi = earlyHistory.get(ii);
+                    if (Boolean.TRUE.equals(xi.getIsForStandardAdjustment())) {
+                        if ("RECALC_START".equals(xi.getStatus())) barrierIdx2 = ii;
+                        break;
+                    }
+                }
+                List<Measurement> sessionSamples = new java.util.ArrayList<>();
+                if (barrierIdx2 != -1) {
+                    // Phase 1: ก่อน barrier (server time — ปกติ)
+                    for (int ii = 0; ii < barrierIdx2; ii++) {
+                        Measurement xi = earlyHistory.get(ii);
+                        if ("RECALC_SAMPLE".equals(xi.getStatus()) && xi.getWeight() != null) sessionSamples.add(xi);
+                    }
+                    // Phase 2: หลัง barrier (device time เก่ากว่า server) — หยุดทันทีที่เจอ non-RECALC_SAMPLE
+                    for (int ii = barrierIdx2 + 1; ii < earlyHistory.size(); ii++) {
+                        Measurement xi = earlyHistory.get(ii);
+                        if (Boolean.TRUE.equals(xi.getIsForStandardAdjustment())) break;
+                        if (!"RECALC_SAMPLE".equals(xi.getStatus())) break; // ตัดข้าม session เก่า
+                        if (xi.getWeight() != null) sessionSamples.add(xi);
+                    }
+                }
+                sessionSamples.sort(java.util.Comparator.comparing(Measurement::getTimestamp));
+                List<Double> allW = sessionSamples.stream().map(Measurement::getWeight)
                         .collect(java.util.stream.Collectors.toList());
-                allW.add(w); // เพิ่มกล่องที่เพิ่งชั่ง
-                try { stdPayload.put("sampleWeightsJson",
-                        new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(allW)); }
-                catch (Exception ignored2) {}
+                allW.add(w); // เพิ่มกล่องที่เพิ่งชั่ง (กล่องที่ 10)
+                stdPayload.put("allWeights", allW); // ใช้ key ที่ frontend อ่านได้ตรง
                 try { stdReq.setPayloadJson(
                         new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(stdPayload)); }
                 catch (Exception ignored2) {}
@@ -607,30 +627,22 @@ public class MeasurementController {
         resp.setRecalcSampleCount(recalcLast.sampleCount);
         resp.setRecalcCurrentAvg(recalcLast.currentAvg);
         
-        // Check for pending QA approval (for logout/login scenario recovery)
-        // ตรวจสอบว่ามี approval ที่ pending อยู่แล้วหรือไม่ เพื่อให้ frontend restore lock state
+        // หา pending STD_CHANGE_REQUEST สำหรับ lot นี้ (ทั้ง yellow-streak และ recalc)
+        // เพื่อ restore qaApprovalId หลัง logout/login
         try {
-          // Query: หา approval ที่ pending สำหรับ STD_CHANGE_REQUEST ของ lot นี้
-          // ในกรณี logout/login - state reset แต่ approval ยังคงอยู่ในระบบ
-          List<Approval> pendingApprovals = approvalRepo.findAll().stream()
+          List<Approval> pendingStdApprovals = approvalRepo.findAll().stream()
             .filter(a -> "PENDING".equalsIgnoreCase(a.getStatus()))
             .filter(a -> "STD_CHANGE_REQUEST".equalsIgnoreCase(a.getType()))
             .filter(a -> a.getPayloadJson() != null && a.getPayloadJson().contains(cleanLot))
             .collect(java.util.stream.Collectors.toList());
-          
-          if (!pendingApprovals.isEmpty()) {
-            // ใช้ approval ตัวล่าสุด
-            Approval latestPending = pendingApprovals.stream()
-              .max(java.util.Comparator.comparing(Approval::getId))
-              .orElse(null);
-            if (latestPending != null) {
-              resp.setId(latestPending.getId()); // Use approval ID as indicator for frontend
-              // ปล. frontend จะตรวจสอบว่า resp.id มีค่า && requiresApproval=true เพื่อ restore qaApprovalId
+          if (!pendingStdApprovals.isEmpty()) {
+            Long latestPendingId = pendingStdApprovals.stream()
+              .map(Approval::getId).filter(Objects::nonNull).max(Long::compare).orElse(null);
+            if (latestPendingId != null) {
+              pendingApprovalId = latestPendingId; // ใช้ field เดียวกับ yellow streak
             }
           }
-        } catch (Exception e) {
-          // Silent catch - ไม่ใช่ critical operation
-        }
+        } catch (Exception e) { /* silent */ }
 
         if (m != null) {
             resp.setId(m.getMeasurementId());
@@ -726,6 +738,58 @@ public class MeasurementController {
         return ResponseEntity.ok()
                 .header("Cache-Control", "no-cache, no-store, must-revalidate")
                 .body(resp);
+    }
+
+    /** ดึง RECALC_SAMPLE ของ session ปัจจุบัน (ใช้ Phase1+Phase2 filter เหมือน computeRecalcState) */
+    @GetMapping("/recalc-samples")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<?> getRecalcSamples(@RequestParam String productCode,
+                                              @RequestParam String scaleId,
+                                              @RequestParam String lotNo) {
+        String pc = productCode.trim();
+        String sc = scaleId.trim();
+        String ln = lotNo.trim();
+        List<Measurement> hist = measurementRepo
+                .findTop100ByProduct_ProductCodeAndScale_ScaleIdAndLotNoOrderByTimestampDesc(pc, sc, ln);
+        RecalcState state = computeRecalcState(hist);
+        if (!state.active) return ResponseEntity.ok(java.util.Map.of(
+                "active", false, "samples", java.util.List.of(), "sampleCount", 0, "avg", 0.0));
+
+        // หา barrier index
+        int barrierIdx = -1;
+        for (int i = 0; i < hist.size(); i++) {
+            Measurement x = hist.get(i);
+            if (Boolean.TRUE.equals(x.getIsForStandardAdjustment())) {
+                if ("RECALC_START".equals(x.getStatus())) barrierIdx = i;
+                break;
+            }
+        }
+        List<java.util.Map<String, Object>> samples = new java.util.ArrayList<>();
+        if (barrierIdx != -1) {
+            // Phase 1
+            for (int i = 0; i < barrierIdx; i++) {
+                Measurement x = hist.get(i);
+                if ("RECALC_SAMPLE".equals(x.getStatus()) && x.getWeight() != null) {
+                    samples.add(java.util.Map.of("outer", x.getOuterBoxNumber(), "inner", x.getInnerBoxOrder(),
+                            "weight", x.getWeight(), "ts", x.getTimestamp() != null ? x.getTimestamp().toString() : ""));
+                }
+            }
+            // Phase 2 (device time offset)
+            for (int i = barrierIdx + 1; i < hist.size(); i++) {
+                Measurement x = hist.get(i);
+                if (Boolean.TRUE.equals(x.getIsForStandardAdjustment())) break;
+                if (!"RECALC_SAMPLE".equals(x.getStatus())) break;
+                if (x.getWeight() != null) {
+                    samples.add(java.util.Map.of("outer", x.getOuterBoxNumber(), "inner", x.getInnerBoxOrder(),
+                            "weight", x.getWeight(), "ts", x.getTimestamp() != null ? x.getTimestamp().toString() : ""));
+                }
+            }
+        }
+        samples.sort(java.util.Comparator.comparing(m -> (String) m.get("ts")));
+        return ResponseEntity.ok(java.util.Map.of(
+                "active", true, "samples", samples,
+                "sampleCount", state.sampleCount,
+                "avg", state.currentAvg));
     }
 
     @GetMapping("/exists")
@@ -1004,7 +1068,7 @@ public class MeasurementController {
 
     // Operator re-weighs the same box after Leader approval
     @PutMapping("/reweigh")
-    @PreAuthorize("hasRole('OPERATOR')")
+    @PreAuthorize("hasAnyRole('OPERATOR','QA','LEADER','ADMIN')")
     public ResponseEntity<?> reweigh(@RequestBody ReweighRequest req) {
         if (req.getProductCode() == null || req.getScaleId() == null || req.getLotNo() == null
                 || req.getOuterBox() == null || req.getInnerOrder() == null) {
@@ -1035,7 +1099,14 @@ public class MeasurementController {
 
         Double reweighSnapshotStd = null, reweighSnapshotStd1 = null, reweighSnapshotStd2 = null;
 
-        if ("DOUBLE".equalsIgnoreCase(p.getWeighingMode())) {
+        if (ap.isRecalcStdMode()) {
+            // Recalc mode: ข้ามการ classify ทั้งหมด เพื่อป้องกัน NPE จาก getEffectiveStandard=null
+            // status = RECALC_SAMPLE เสมอ, effectiveStd = น้ำหนักกล่องนี้ (running avg ของ 1 กล่อง)
+            status = "RECALC_SAMPLE";
+            reweighSnapshotStd  = w;
+            reweighSnapshotStd1 = null;
+            reweighSnapshotStd2 = null;
+        } else if ("DOUBLE".equalsIgnoreCase(p.getWeighingMode())) {
             Double w1 = req.getWeight1();
 
             Double w2 = req.getWeight2();
@@ -1070,15 +1141,6 @@ public class MeasurementController {
             reweighSnapshotStd = baseStd;
         }
 
-        // ถ้า approval มี recalcStdMode=true → กล่องนี้คือ Sample #1 ของ Recalc
-        // status เปลี่ยนเป็น RECALC_SAMPLE, effectiveStd = น้ำหนักกล่องนี้ (avg ของ 1 กล่อง = ตัวเอง)
-        if (ap.isRecalcStdMode()) {
-            status = "RECALC_SAMPLE";
-            reweighSnapshotStd  = w;    // running avg ของ 1 กล่อง = น้ำหนักกล่องนั้น
-            reweighSnapshotStd1 = null;
-            reweighSnapshotStd2 = null;
-        }
-
         m.setWeight(w);
         m.setWeight1(req.getWeight1());
         m.setWeight2(req.getWeight2());
@@ -1086,7 +1148,10 @@ public class MeasurementController {
         m.setEffectiveStd(reweighSnapshotStd);
         m.setEffectiveStd1(reweighSnapshotStd1);
         m.setEffectiveStd2(reweighSnapshotStd2);
-        if (req.getTimestamp() != null) {
+        if (ap.isRecalcStdMode()) {
+            // RECALC_SAMPLE ต้องใช้ server time เสมอ เพื่อให้ ordering หลัง RECALC_START barrier
+            m.setTimestamp(LocalDateTime.now());
+        } else if (req.getTimestamp() != null) {
             m.setTimestamp(req.getTimestamp().atZone(java.time.ZoneId.systemDefault()).toLocalDateTime());
         } else {
             m.setTimestamp(LocalDateTime.now());
@@ -1150,6 +1215,15 @@ public class MeasurementController {
         responseMap.put("allWeights1", initialStatus.get("allWeights1"));
         responseMap.put("allWeights2", initialStatus.get("allWeights2"));
         responseMap.put("initialStdThreshold", initialStatus.get("threshold"));
+
+        // ถ้า approval เป็น recalcStdMode → คืน recalc state ให้ frontend อัปเดต progress
+        if (ap.isRecalcStdMode()) {
+            RecalcState recalcAfter = computeRecalcState(history);
+            responseMap.put("recalcStdMode", true);
+            responseMap.put("recalcSampleCount", recalcAfter.sampleCount);
+            responseMap.put("recalcCurrentAvg", recalcAfter.currentAvg);
+            responseMap.put("recalcComplete", recalcAfter.sampleCount >= 10);
+        }
 
         return ResponseEntity.ok(responseMap);
     }
@@ -1247,12 +1321,22 @@ public class MeasurementController {
 
         double sumWeights = 0.0;
         int count = 0;
+        // Phase 1: นับ RECALC_SAMPLE ก่อน barrier (i < barrierIdx) — กล่องที่ใช้ server time (ปกติ)
         for (int i = 0; i < barrierIdx; i++) {
             Measurement x = historyDesc.get(i);
             if ("RECALC_SAMPLE".equals(x.getStatus()) && x.getWeight() != null) {
                 sumWeights += x.getWeight();
                 count++;
             }
+        }
+        // Phase 2: นับ RECALC_SAMPLE หลัง barrier (i > barrierIdx) — กรณี device time เก่ากว่า server time เล็กน้อย
+        // หยุดทันทีที่เจอ record ที่ไม่ใช่ RECALC_SAMPLE (เช่น RED, GREEN, YELLOW)
+        // เพื่อป้องกันการนับ RECALC_SAMPLE จาก session ก่อนหน้า (ที่อยู่ไกลออกไปใน history)
+        for (int i = barrierIdx + 1; i < historyDesc.size(); i++) {
+            Measurement x = historyDesc.get(i);
+            if (Boolean.TRUE.equals(x.getIsForStandardAdjustment())) break; // barrier อื่น → หยุด
+            if (!"RECALC_SAMPLE".equals(x.getStatus())) break; // พบ record ปกติ → หยุด (ตัดข้าม session เก่า)
+            if (x.getWeight() != null) { sumWeights += x.getWeight(); count++; }
         }
         double avg = count > 0 ? sumWeights / count : 0.0;
         return new RecalcState(true, count, sumWeights, avg);
