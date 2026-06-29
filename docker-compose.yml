@@ -23,8 +23,8 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       # SSL certificate (สร้างด้วย generate-ssl.bat / generate-ssl.sh ก่อน)
       - ./nginx/ssl:/etc/nginx/ssl:ro
-      # Frontend static files (npm run build ก่อน)
-      - ./frontend/dist:/usr/share/nginx/html:ro
+      # Frontend static files (npm run build ก่อน) — serve ที่ /eiken/
+      - ./frontend/dist:/usr/share/nginx/eiken:ro
     # nginx ต้องเห็น backend ที่รันบน host
     extra_hosts:
       - "localhost:host-gateway"
